@@ -32,6 +32,7 @@ test('a request reaches the origin with its own headers, and comes back framed',
       ['Connection', 'x-drop'],
       ['X-Drop', 'gone'],
       ['Host', 'evil.test'],
+      ['Proxy-Authorization', 'Basic cHJveHk6c2VjcmV0'],
     ])
   );
   assert.equal(res.status, 200);
@@ -57,6 +58,7 @@ test('a request reaches the origin with its own headers, and comes back framed',
   assert.equal(seen.headers.cookie, 'a=1; b=2');
   assert.equal(seen.headers['x-custom'], 'one');
   assert.equal(seen.headers['x-drop'], undefined);
+  assert.equal(seen.headers['proxy-authorization'], undefined);
   assert.equal(seen.headers.host, new URL(origin.url).host);
   assert.equal(seen.headers['accept-encoding'], 'gzip, deflate, br');
   assert.equal(seen.headers.origin, undefined);

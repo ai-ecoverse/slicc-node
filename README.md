@@ -72,7 +72,7 @@ From step 5 on, every answer carries `Access-Control-Allow-Origin`, `Access-Cont
 
 - `url` must be `http:` or `https:` and `method` an HTTP token; otherwise `400 malformed X-Slicc-Raw-Request header`. With neither this header nor the probe header, the answer is `400 missing X-Slicc-Raw-Request header`.
 - The hop's body is the upstream body, buffered up to 256 MiB, and `413` past that. It is not sent for `GET` and `HEAD`.
-- Before sending, the proxy drops hop-by-hop headers (`Connection`, the fields `Connection` names, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`) and the ones it owns (`Host`, `Content-Length`, `Accept-Encoding`, `Expect`). It joins repeated names with `, `, except `Cookie`, which joins with `; `.
+- Before sending, the proxy drops hop-by-hop headers (`Connection`, the fields `Connection` names, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`) and the ones it owns (`Host`, `Content-Length`, `Accept-Encoding`, `Expect`), and `Proxy-Authorization`, which is meant for a proxy, not the origin. It joins repeated names with `, `, except `Cookie`, which joins with `; `.
 - It sets `Accept-Encoding: gzip, deflate, br` (the codings it decodes), or nothing for a request with `Range` or `If-Range`, so ranged bodies stay unencoded.
 - Redirects are not followed.
 

@@ -25,6 +25,7 @@ const REQUEST_SKIP = new Set([
   'content-length',
   'accept-encoding',
   'expect',
+  'proxy-authorization',
 ]);
 const RESPONSE_SKIP = new Set(HOP_BY_HOP);
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
