@@ -1,0 +1,2 @@
+extends:
+  - node_modules/@ai-ecoverse/slicc-shared-web/lefthook.yml

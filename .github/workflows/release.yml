@@ -1,0 +1,21 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: ai-ecoverse/slicc-shared-web/.github/workflows/node-release.yml@v1.3.0
+    with:
+      chromium: false
+    secrets: inherit

@@ -1,0 +1,49 @@
+{
+  "name": "@ai-ecoverse/slicc-node",
+  "version": "0.0.0",
+  "description": "SLICC's Node local proxy: the page on *.sliccy.ai talks to this process through a proxy key",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ai-ecoverse/slicc-node.git"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "slicc-node": "bin/slicc-node.js"
+  },
+  "fledgling": {
+    "provider": "github",
+    "workflow": "release.yml",
+    "repo": "ai-ecoverse/slicc-node",
+    "publish": true
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "prepare": "lefthook install",
+    "lint": "slicc-lint",
+    "format": "biome check --write .",
+    "test": "true",
+    "trust": "npx fledgling sync -y --skip-publish",
+    "trust:dry": "npx fledgling sync --dry-run -y --skip-publish",
+    "release": "semantic-release"
+  },
+  "devDependencies": {
+    "@ai-ecoverse/slicc-shared-web": "1.3.0",
+    "@biomejs/biome": "2.5.15",
+    "lefthook": "2.1.16",
+    "semantic-release": "25.0.9"
+  }
+}
