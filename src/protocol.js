@@ -6,6 +6,7 @@ export const RAW_PROTOCOL_VERSION = 1;
 export const KEY_HEADER = 'X-Bridge-Token';
 export const ERROR_HEADER = 'X-Proxy-Error';
 export const MAX_REQUEST_BODY = 256 * 1024 * 1024;
+export const MAX_HEADER_BYTES = 1024 * 1024;
 export const ACCEPT_ENCODING = 'gzip, deflate, br';
 
 const DECODED_CODINGS = new Set(['gzip', 'x-gzip', 'deflate', 'br']);

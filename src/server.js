@@ -8,6 +8,7 @@ import {
   hasBody,
   isDecodedPartial,
   KEY_HEADER,
+  MAX_HEADER_BYTES,
   MAX_REQUEST_BODY,
   RAW_CONTENT_TYPE,
   RAW_PROBE_HEADER,
@@ -191,6 +192,7 @@ export async function startProxy(options = {}) {
   const origins = (options.origins ?? []).map(normalizeOrigin).filter(Boolean);
   let port = 0;
   const server = createServer(
+    { maxHeaderSize: MAX_HEADER_BYTES },
     handler({
       key,
       origins,

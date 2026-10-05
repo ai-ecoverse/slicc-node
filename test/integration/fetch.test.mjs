@@ -64,6 +64,14 @@ test('a request reaches the origin with its own headers, and comes back framed',
   assert.match(proxy.stderr(), new RegExp(`GET ${origin.url}/hello ← 200`));
 });
 
+test('a head with a large cookie fits', async () => {
+  origin.seen.length = 0;
+  const cookie = `big=${'x'.repeat(64 * 1024)}`;
+  const res = await raw(rawHead(`${origin.url}/hello`, 'GET', [['Cookie', cookie]]));
+  assert.equal(res.status, 200);
+  assert.equal(origin.seen[0].headers.cookie, cookie);
+});
+
 test('a redirect is not followed and keeps every Set-Cookie', async () => {
   origin.seen.length = 0;
   const { head } = unframe((await raw(rawHead(`${origin.url}/moved`))).body);

@@ -3,7 +3,7 @@ import { gzipSync } from 'node:zlib';
 
 export async function upstream() {
   const seen = [];
-  const server = createServer(async (req, res) => {
+  const server = createServer({ maxHeaderSize: 1024 * 1024 }, async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     seen.push({

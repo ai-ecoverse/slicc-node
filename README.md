@@ -64,7 +64,7 @@ From step 5 on, every answer carries `Access-Control-Allow-Origin`, `Access-Cont
 
 ### Request
 
-`POST /api/fetch-proxy` with the key and `X-Slicc-Raw-Request: <json>`. The JSON is the head to send upstream, with characters past U+007E `\u`-escaped:
+`POST /api/fetch-proxy` with the key and `X-Slicc-Raw-Request: <json>`. The proxy accepts request heads up to 1 MiB, since every upstream header travels in this one. The JSON is the head to send upstream, with characters past U+007E `\u`-escaped:
 
 ```json
 { "url": "https://example.com/", "method": "GET", "headers": [["User-Agent", "curl/8.22.0"], ["Accept", "*/*"]] }
