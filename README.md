@@ -76,6 +76,10 @@ From step 5 on, every answer carries `Access-Control-Allow-Origin`, `Access-Cont
 - It sets `Accept-Encoding: gzip, deflate, br` (the codings it decodes), or nothing for a request with `Range` or `If-Range`, so ranged bodies stay unencoded.
 - Redirects are not followed.
 
+### Upstream TLS
+
+`startProxy` uses `globalThis.fetch` unless a `fetch` option is passed. Node's fetch verifies HTTPS certificates by default. That is the only check of the real origin: `@ai-ecoverse/wasm-tls-engine` terminates TLS only for the realm's own MITM (kernel proxy ↔ program), not the hop from this process to the origin. Do not pass a `fetch` that turns verification off, and do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+
 ### Response
 
 Once the upstream answers, the proxy answers `200` with `Content-Type: application/vnd.slicc.raw-fetch` and `Cache-Control: no-store`. The body is:
