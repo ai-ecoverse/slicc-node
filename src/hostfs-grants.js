@@ -48,7 +48,7 @@ function closeHandles(grant) {
   grant.handles.clear();
 }
 
-export function createGrants({ idle = GRANT_IDLE } = {}) {
+export function createGrants({ idle = GRANT_IDLE, maxHandles = MAX_HANDLES } = {}) {
   const grants = new Map();
   const arm = (grant) => {
     clearTimeout(grant.timer);
@@ -76,6 +76,7 @@ export function createGrants({ idle = GRANT_IDLE } = {}) {
         handles: new Map(),
         streams: new Set(),
         nextFh: 1,
+        maxHandles,
         timer: null,
       };
       arm(grant);
@@ -105,7 +106,7 @@ export function createGrants({ idle = GRANT_IDLE } = {}) {
 }
 
 export function addHandle(grant, entry) {
-  if (grant.handles.size >= MAX_HANDLES) return null;
+  if (grant.handles.size >= grant.maxHandles) return null;
   const fh = grant.nextFh++;
   grant.handles.set(fh, entry);
   return fh;

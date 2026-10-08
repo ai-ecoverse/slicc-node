@@ -39,6 +39,7 @@ const STATUS = {
   EFBIG: 507,
 };
 const ERRNO = /^E[A-Z0-9]+$/;
+const FORBIDDEN = process.platform === 'win32' ? /[\0\\:]/ : /\0/;
 const OPEN_FLAGS = constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 const MESSAGES = {
@@ -78,9 +79,8 @@ function within(root, path) {
 }
 
 export function segments(rel) {
-  if (typeof rel !== 'string' || rel.includes('\0')) throw new HostfsError('EINVAL');
+  if (typeof rel !== 'string' || FORBIDDEN.test(rel)) throw new HostfsError('EINVAL');
   if (rel.startsWith('/')) throw new HostfsError('EACCES', 'absolute path');
-  if (process.platform === 'win32' && /[\\:]/.test(rel)) throw new HostfsError('EACCES');
   const parts = rel.split('/').filter((part) => part !== '' && part !== '.');
   if (parts.includes('..')) throw new HostfsError('EACCES');
   return parts;

@@ -1,0 +1,11 @@
+<!doctype html>
+<title>seven</title>
+<script>
+window.kernel = new Worker('/worker.js');
+window.ask = (message) =>
+  new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event) => resolve(event.data);
+    window.kernel.postMessage(message, [channel.port2]);
+  });
+</script>

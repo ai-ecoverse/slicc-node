@@ -1,6 +1,7 @@
 import { constants, createReadStream } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import {
   attrOf,
   errnoOf,
@@ -180,14 +181,7 @@ async function read(lock, grant, body, res, cors) {
       end: end - 1,
       autoClose: false,
     });
-    await new Promise((resolve) => {
-      stream.on('error', () => {
-        res.destroy();
-        resolve();
-      });
-      res.on('close', resolve);
-      stream.pipe(res);
-    });
+    await pipeline(stream, res).catch(() => res.destroy());
   } finally {
     if (owned) await file.close();
   }
@@ -226,6 +220,7 @@ function watch({ grants, watchers }, found, res, cors) {
   const cleanups = [];
   const end = () => res.end();
   const line = (value) => {
+    if (res.writableEnded) return;
     if (res.writableLength > STREAM_BACKLOG) res.destroy();
     else res.write(`${JSON.stringify(value)}\n`);
   };
@@ -241,10 +236,15 @@ function watch({ grants, watchers }, found, res, cors) {
   });
 }
 
-export function createHostfs({ folders = [], idle, log = () => {} } = {}) {
-  const grants = createGrants({ idle });
+export function createHostfs({
+  folders = [],
+  idle,
+  maxHandles,
+  log = () => {},
+  watchers = createWatchers(),
+} = {}) {
+  const grants = createGrants({ idle, maxHandles });
   const lock = createLock();
-  const watchers = createWatchers();
   const byName = new Map(folders.map((folder) => [folder.name, folder]));
 
   async function grant(req, res, cors) {
@@ -312,8 +312,10 @@ export function createHostfs({ folders = [], idle, log = () => {} } = {}) {
       .map((token) => grants.find(token, req.headers.origin));
   }
 
+  const mounts = () => folders.map(({ name, readonly }) => ({ name, readonly }));
+
   return {
-    mounts: () => folders.map(({ name, readonly }) => ({ name, readonly })),
+    mounts,
     handle(req, res, path, cors) {
       const reply = (promise) =>
         promise.catch((err) => {
@@ -321,7 +323,7 @@ export function createHostfs({ folders = [], idle, log = () => {} } = {}) {
           else fsFail(res, cors, err);
         });
       if (path === HOSTFS_GRANT_PATH) return reply(grant(req, res, cors));
-      if (path === HOSTFS_MOUNTS_PATH) return json(res, 200, cors, this.mounts());
+      if (path === HOSTFS_MOUNTS_PATH) return json(res, 200, cors, mounts());
       const found = tokens(req);
       if (
         found.length === 0 ||
