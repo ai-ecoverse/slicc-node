@@ -12,8 +12,12 @@ let browser;
 let opener;
 before(async () => {
   page = createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    if (req.url.startsWith('/relay')) {
+    const relay = req.url.startsWith('/relay');
+    res.writeHead(200, {
+      'Content-Type': 'text/html',
+      ...(relay ? {} : { 'Cross-Origin-Opener-Policy': 'same-origin' }),
+    });
+    if (relay) {
       const target = new URL(req.url, 'http://x').searchParams.get('to');
       res.end(`<script>location.replace(${JSON.stringify(target)});</script>`);
     } else {
@@ -64,27 +68,53 @@ test('a nonce registers only with an allowed origin and the key', async () => {
   assert.equal(preflight.status, 204);
 });
 
-test('the callback answers a registered nonce once, posting only to its origin', async () => {
+test('the callback page hands the redirect back once, and only its registering origin collects it', async () => {
   await expect({ nonce: nonce('once') });
+  const result = (value, origin = seven) =>
+    hop(proxy, {
+      method: 'GET',
+      path: `/api/oauth-result?nonce=${value}`,
+      headers: { Origin: origin, 'X-Bridge-Token': proxy.key },
+    });
+  assert.equal((await result(nonce('once'))).status, 204);
   const first = await callback(`?nonce=${nonce('once')}`);
   assert.equal(first.status, 200);
-  assert.match(
-    first.body.toString(),
-    /postMessage\(\{ type: 'oauth-callback', redirectUrl: location\.href \}, "https:\/\/seven\.sliccy\.ai"\)/
-  );
+  assert.match(first.body.toString(), /fetch\('\/auth\/callback'/);
   assert.match(
     first.headers['content-security-policy'],
-    /^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/=]+'$/
+    /^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/=]+'; connect-src 'self'$/
   );
   assert.equal(first.headers['cache-control'], 'no-store');
   assert.equal((await callback(`?nonce=${nonce('once')}`)).status, 403);
   assert.equal((await callback(`?nonce=${nonce('unknown')}`)).status, 403);
   assert.equal((await callback('')).status, 403);
-  assert.equal((await hop(proxy, { method: 'POST', path: '/auth/callback' })).status, 405);
+  const port = new URL(proxy.url).port;
+  const redirectUrl = `http://localhost:${port}/auth/callback?nonce=${nonce('once')}#access_token=dummy-token`;
+  const deliver = (origin) =>
+    hop(proxy, {
+      path: '/auth/callback',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nonce: nonce('once'), redirectUrl }),
+    });
+  assert.equal((await deliver(seven)).status, 403);
+  assert.equal((await deliver(`http://localhost:${port}`)).status, 204);
+  assert.equal((await result(nonce('once'), 'https://other.sliccy.ai')).status, 404);
+  const got = await result(nonce('once'));
+  assert.equal(got.status, 200);
+  assert.equal(JSON.parse(got.body.toString()).redirectUrl, redirectUrl);
+  assert.equal((await result(nonce('once'))).status, 404);
+  await expect({ nonce: nonce('dropped') });
+  const drop = await hop(proxy, {
+    method: 'DELETE',
+    path: `/api/oauth-state?nonce=${nonce('dropped')}`,
+    headers: { Origin: seven, 'X-Bridge-Token': proxy.key },
+  });
+  assert.equal(drop.status, 204);
+  assert.equal((await result(nonce('dropped'))).status, 404);
   assert.doesNotMatch(proxy.stderr(), /n{20}|token/);
 });
 
-test('a fake IMS redirect carrying a dummy token reaches the registered opener only', async () => {
+test('behind COOP, a fake IMS redirect reaches only the opener that registered it', async () => {
   const tab = await browser.newPage();
   await tab.goto(`${opener}/`);
   const register = (value) =>
@@ -107,24 +137,35 @@ test('a fake IMS redirect carrying a dummy token reaches the registered opener o
       },
       { url: proxy.url, value }
     );
-  const received = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    return tab.evaluate(() => window.got.splice(0));
-  };
+  const collect = (value) =>
+    tab.evaluate(
+      async ({ url, key, value }) => {
+        for (let i = 0; i < 20; i++) {
+          const response = await fetch(`${url}/api/oauth-result?nonce=${value}`, {
+            headers: { 'X-Bridge-Token': key },
+          });
+          if (response.status !== 204) {
+            return { status: response.status, body: await response.text() };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return { status: 204 };
+      },
+      { url: proxy.url, key: proxy.key, value }
+    );
 
   assert.equal(await register(nonce('good')), 204);
   await login(nonce('good'));
-  const good = await received();
-  assert.equal(good.length, 1);
-  assert.equal(good[0].origin, proxy.url.replace('127.0.0.1', 'localhost'));
-  assert.equal(good[0].popup, true);
-  assert.match(good[0].data.redirectUrl, /#access_token=dummy-token/);
+  const good = await collect(nonce('good'));
+  assert.equal(good.status, 200);
+  assert.match(JSON.parse(good.body).redirectUrl, /#access_token=dummy-token/);
+  assert.deepEqual(await tab.evaluate(() => window.got), []);
 
   await login(nonce('stranger'));
-  assert.deepEqual(await received(), []);
+  assert.equal((await collect(nonce('stranger'))).status, 404);
 
   await expect({ nonce: nonce('elsewhere') });
   await login(nonce('elsewhere'));
-  assert.deepEqual(await received(), []);
+  assert.equal((await collect(nonce('elsewhere'))).status, 404);
   await tab.close();
 });

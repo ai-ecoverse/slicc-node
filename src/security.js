@@ -52,7 +52,7 @@ export function corsHeaders(origin) {
 export function preflightHeaders(origin, privateNetwork) {
   return {
     ...corsHeaders(origin),
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': ALLOW_HEADERS,
     'Access-Control-Max-Age': '600',
     ...(privateNetwork ? { 'Access-Control-Allow-Private-Network': 'true' } : {}),

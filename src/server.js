@@ -12,6 +12,8 @@ import {
   MAX_HEADER_BYTES,
   MAX_REQUEST_BODY,
   OAUTH_CALLBACK_PATH,
+  OAUTH_REDIRECT_LIMIT,
+  OAUTH_RESULT_PATH,
   OAUTH_STATE_PATH,
   RAW_CONTENT_TYPE,
   RAW_PROBE_HEADER,
@@ -137,15 +139,62 @@ function page(res, status, { headers, body }) {
   res.end(body);
 }
 
-function callback(req, res, url, states) {
+function callback(req, res, url, states, port) {
+  if (req.method === 'POST') {
+    void deliver(req, res, states, port);
+    return;
+  }
   if (req.method !== 'GET') {
-    fail(res, 405, 'method not allowed', { Allow: 'GET' });
+    fail(res, 405, 'method not allowed', { Allow: 'GET, POST' });
     return;
   }
   const nonce = url.searchParams.get('nonce');
-  const origin = validNonce(nonce) ? states.take(nonce) : null;
-  if (origin) page(res, 200, callbackPage(origin));
+  if (validNonce(nonce) && states.visit(nonce)) page(res, 200, callbackPage);
   else page(res, 403, refusedPage);
+}
+
+function sameProxy(origin, port) {
+  if (typeof origin !== 'string' || !URL.canParse(origin)) return false;
+  const { protocol, host } = new URL(origin);
+  return protocol === 'http:' && isLoopbackHost(host, port);
+}
+
+async function deliver(req, res, states, port) {
+  if (!sameProxy(req.headers.origin, port)) {
+    fail(res, 403, 'origin not allowed');
+    return;
+  }
+  let body;
+  try {
+    body = JSON.parse((await readBody(req, OAUTH_REDIRECT_LIMIT)).toString());
+  } catch {
+    body = null;
+  }
+  const { nonce, redirectUrl } = body ?? {};
+  const matches =
+    validNonce(nonce) &&
+    typeof redirectUrl === 'string' &&
+    URL.canParse(redirectUrl) &&
+    new URL(redirectUrl).searchParams.get('nonce') === nonce;
+  res.writeHead(matches && states.deliver(nonce, redirectUrl) ? 204 : 403, {
+    'Cache-Control': 'no-store',
+  });
+  res.end();
+}
+
+function collect(res, url, cors, states, origin) {
+  const found = states.collect(url.searchParams.get('nonce'), origin);
+  if (!found) {
+    fail(res, 404, 'sign-in unknown or expired', cors);
+    return;
+  }
+  if (found.pending) {
+    res.writeHead(204, { ...cors, 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
+  res.writeHead(200, { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify({ redirectUrl: found.redirectUrl }));
 }
 
 async function expectState(req, res, cors, states) {
@@ -164,6 +213,25 @@ async function expectState(req, res, cors, states) {
   res.end();
 }
 
+function oauth(req, res, url, cors, states) {
+  const nonce = url.searchParams.get('nonce');
+  if (url.pathname === OAUTH_RESULT_PATH) {
+    collect(res, url, cors, states, req.headers.origin);
+  } else if (req.method === 'DELETE') {
+    states.drop(nonce, req.headers.origin);
+    res.writeHead(204, { ...cors, 'Cache-Control': 'no-store' });
+    res.end();
+  } else {
+    void expectState(req, res, cors, states);
+  }
+}
+
+const gated = {
+  [FETCH_PROXY_PATH]: ['POST'],
+  [OAUTH_STATE_PATH]: ['POST', 'DELETE'],
+  [OAUTH_RESULT_PATH]: ['GET'],
+};
+
 export function handler(options) {
   const states = options.states ?? createOAuthStates();
   return (req, res) => {
@@ -174,10 +242,11 @@ export function handler(options) {
       return;
     }
     if (path === OAUTH_CALLBACK_PATH) {
-      callback(req, res, url, states);
+      callback(req, res, url, states, options.port());
       return;
     }
-    if (path !== FETCH_PROXY_PATH && path !== OAUTH_STATE_PATH) {
+    const methods = gated[path];
+    if (!methods) {
       fail(res, 404, 'not found');
       return;
     }
@@ -193,16 +262,16 @@ export function handler(options) {
       return;
     }
     const cors = corsHeaders(origin);
-    if (req.method !== 'POST') {
-      fail(res, 405, 'method not allowed', { ...cors, Allow: 'POST, OPTIONS' });
+    if (!methods.includes(req.method)) {
+      fail(res, 405, 'method not allowed', { ...cors, Allow: `${methods.join(', ')}, OPTIONS` });
       return;
     }
     if (!validKey(req.headers[KEY], options.key)) {
       fail(res, 403, 'proxy key missing or wrong', cors);
       return;
     }
-    if (path === OAUTH_STATE_PATH) {
-      void expectState(req, res, cors, states);
+    if (path !== FETCH_PROXY_PATH) {
+      oauth(req, res, url, cors, states);
       return;
     }
     if (req.headers[RAW_REQUEST] === undefined) {

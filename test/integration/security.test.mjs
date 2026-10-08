@@ -89,7 +89,7 @@ test('the preflight allows the transport headers and the private network', async
   });
   assert.equal(res.status, 204);
   assert.equal(res.headers['access-control-allow-origin'], seven);
-  assert.equal(res.headers['access-control-allow-methods'], 'POST, OPTIONS');
+  assert.equal(res.headers['access-control-allow-methods'], 'GET, POST, DELETE, OPTIONS');
   assert.equal(
     res.headers['access-control-allow-headers'],
     'Content-Type, X-Bridge-Token, X-Slicc-Raw-Request, X-Slicc-Raw-Probe'
