@@ -1,11 +1,18 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
+import {
+  createHostfs,
+  HOSTFS_KEY_PATHS,
+  HOSTFS_TOKEN_PATHS,
+  loadFolders,
+} from './hostfs-routes.js';
+import { fail, readBody, TooLarge } from './http.js';
 import { callbackPage, createOAuthStates, refusedPage, validNonce } from './oauth.js';
 import {
   decodeRequestHead,
-  ERROR_HEADER,
   encodeResponseFrame,
   FETCH_PROXY_PATH,
+  HOSTFS_PROTOCOL_VERSION,
   hasBody,
   isDecodedPartial,
   KEY_HEADER,
@@ -35,26 +42,6 @@ import {
 const RAW_REQUEST = RAW_REQUEST_HEADER.toLowerCase();
 const RAW_PROBE = RAW_PROBE_HEADER.toLowerCase();
 const KEY = KEY_HEADER.toLowerCase();
-
-class TooLarge extends Error {}
-
-function fail(res, status, error, headers = {}) {
-  res.writeHead(status, { ...headers, [ERROR_HEADER]: '1', 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error }));
-}
-
-async function readBody(req, limit) {
-  const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > limit) throw new TooLarge();
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.byteLength;
-    if (size > limit) throw new TooLarge();
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
 
 function headerList(upstream) {
   const list = [];
@@ -230,10 +217,29 @@ const gated = {
   [FETCH_PROXY_PATH]: ['POST'],
   [OAUTH_STATE_PATH]: ['POST', 'DELETE'],
   [OAUTH_RESULT_PATH]: ['GET'],
+  ...HOSTFS_KEY_PATHS,
+  ...HOSTFS_TOKEN_PATHS,
 };
+
+function probe(res, cors, options) {
+  res.writeHead(200, {
+    ...cors,
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  });
+  res.end(
+    JSON.stringify({
+      rawFetch: RAW_PROTOCOL_VERSION,
+      requestBodyStreaming: false,
+      maxRequestBodyBytes: options.maxRequestBody,
+      ...(options.hostfs.mounts().length > 0 ? { hostfs: HOSTFS_PROTOCOL_VERSION } : {}),
+    })
+  );
+}
 
 export function handler(options) {
   const states = options.states ?? createOAuthStates();
+  const hostfs = options.hostfs ?? createHostfs();
   return (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
@@ -266,8 +272,16 @@ export function handler(options) {
       fail(res, 405, 'method not allowed', { ...cors, Allow: `${methods.join(', ')}, OPTIONS` });
       return;
     }
+    if (HOSTFS_TOKEN_PATHS[path]) {
+      void hostfs.handle(req, res, path, cors);
+      return;
+    }
     if (!validKey(req.headers[KEY], options.key)) {
       fail(res, 403, 'proxy key missing or wrong', cors);
+      return;
+    }
+    if (HOSTFS_KEY_PATHS[path]) {
+      void hostfs.handle(req, res, path, cors);
       return;
     }
     if (path !== FETCH_PROXY_PATH) {
@@ -279,18 +293,7 @@ export function handler(options) {
         fail(res, 400, `missing ${RAW_REQUEST_HEADER} header`, cors);
         return;
       }
-      res.writeHead(200, {
-        ...cors,
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      });
-      res.end(
-        JSON.stringify({
-          rawFetch: RAW_PROTOCOL_VERSION,
-          requestBodyStreaming: false,
-          maxRequestBodyBytes: options.maxRequestBody,
-        })
-      );
+      probe(res, cors, { ...options, hostfs });
       return;
     }
     relay(req, res, cors, options).catch((err) => {
@@ -304,6 +307,12 @@ export async function startProxy(options = {}) {
   const host = options.host ?? '127.0.0.1';
   const key = options.key ?? mintKey();
   const origins = (options.origins ?? []).map(normalizeOrigin).filter(Boolean);
+  const log = options.log ?? (() => {});
+  const hostfs = createHostfs({
+    folders: await loadFolders(options.mounts ?? [], options.warn ?? log),
+    idle: options.hostfsIdle,
+    log,
+  });
   let port = 0;
   const server = createServer(
     { maxHeaderSize: MAX_HEADER_BYTES },
@@ -313,7 +322,8 @@ export async function startProxy(options = {}) {
       port: () => port,
       fetch: options.fetch ?? globalThis.fetch,
       maxRequestBody: options.maxRequestBody ?? MAX_REQUEST_BODY,
-      log: options.log ?? (() => {}),
+      log,
+      hostfs,
     })
   );
   await new Promise((resolve, reject) => {
@@ -328,6 +338,7 @@ export async function startProxy(options = {}) {
     server,
     close: () =>
       new Promise((resolve) => {
+        hostfs.close();
         server.close(() => resolve());
         server.closeAllConnections();
       }),

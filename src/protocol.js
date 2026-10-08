@@ -12,6 +12,15 @@ export const ERROR_HEADER = 'X-Proxy-Error';
 export const MAX_REQUEST_BODY = 256 * 1024 * 1024;
 export const MAX_HEADER_BYTES = 1024 * 1024;
 export const ACCEPT_ENCODING = 'gzip, deflate, br';
+export const HOSTFS_PATH = '/api/hostfs';
+export const HOSTFS_GRANT_PATH = '/api/hostfs/grant';
+export const HOSTFS_MOUNTS_PATH = '/api/hostfs/mounts';
+export const HOSTFS_WRITE_PATH = '/api/hostfs/write';
+export const HOSTFS_WATCH_PATH = '/api/hostfs/watch';
+export const HOSTFS_TOKEN_HEADER = 'X-Hostfs-Token';
+export const HOSTFS_REQUEST_HEADER = 'X-Hostfs-Request';
+export const HOSTFS_ERRNO_HEADER = 'X-Hostfs-Errno';
+export const HOSTFS_PROTOCOL_VERSION = 1;
 
 const DECODED_CODINGS = new Set(['gzip', 'x-gzip', 'deflate', 'br']);
 const HOP_BY_HOP = [

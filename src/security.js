@@ -1,9 +1,25 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { ERROR_HEADER, KEY_HEADER, RAW_PROBE_HEADER, RAW_REQUEST_HEADER } from './protocol.js';
+import {
+  ERROR_HEADER,
+  HOSTFS_ERRNO_HEADER,
+  HOSTFS_REQUEST_HEADER,
+  HOSTFS_TOKEN_HEADER,
+  KEY_HEADER,
+  RAW_PROBE_HEADER,
+  RAW_REQUEST_HEADER,
+} from './protocol.js';
 
 const SLICCY_HOST = /^https:\/\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.sliccy\.ai$/;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
-const ALLOW_HEADERS = ['Content-Type', KEY_HEADER, RAW_REQUEST_HEADER, RAW_PROBE_HEADER].join(', ');
+const ALLOW_HEADERS = [
+  'Content-Type',
+  KEY_HEADER,
+  RAW_REQUEST_HEADER,
+  RAW_PROBE_HEADER,
+  HOSTFS_TOKEN_HEADER,
+  HOSTFS_REQUEST_HEADER,
+].join(', ');
+const EXPOSE_HEADERS = [ERROR_HEADER, HOSTFS_ERRNO_HEADER, 'ETag', 'Content-Range'].join(', ');
 
 export function mintKey() {
   return randomBytes(32).toString('base64url');
@@ -44,7 +60,7 @@ export function validKey(presented, expected) {
 export function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Expose-Headers': ERROR_HEADER,
+    'Access-Control-Expose-Headers': EXPOSE_HEADERS,
     Vary: 'Origin',
   };
 }
@@ -52,7 +68,7 @@ export function corsHeaders(origin) {
 export function preflightHeaders(origin, privateNetwork) {
   return {
     ...corsHeaders(origin),
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': ALLOW_HEADERS,
     'Access-Control-Max-Age': '600',
     ...(privateNetwork ? { 'Access-Control-Allow-Private-Network': 'true' } : {}),
