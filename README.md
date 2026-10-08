@@ -180,7 +180,7 @@ The body streams to disk with bounded memory, in any order and with holes. `rele
 {"ping": 1}
 ```
 
-- `paths` name what changed and its parent directory, coalesced over 50 ms. Past 256 paths, or when the watcher fails (it restarts), the line is `all`.
+- `paths` name what changed and its parent directory, coalesced over 50 ms. Past 256 paths the line is `all`. A watcher that fails or cannot start retries every second, and sends one `all` when it is lost and one when it is back.
 - A ping goes out every 15 s. The stream ends only when a token it carries is revoked or expires, or when the proxy stops. The kernel reconnects once at once, and goes `nomedium` only when that fails.
 - `X-Hostfs-Token` may list several tokens, comma-separated, so one stream serves every mount. Chrome allows six HTTP/1.1 connections per host and port, shared by the page and its workers.
 - Changes the kernel made itself come back too.
