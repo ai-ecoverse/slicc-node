@@ -44,12 +44,12 @@ Every request to the proxy passes these checks in order. Each refusal is a JSON 
 3. **Origin:** `Origin` must be `https://<label>.sliccy.ai`, where `<label>` is one DNS label other than `www`. That covers `seven` and the branch hosts slicc-bios deploys. Origins added with `--origin` (normalized, exact match) are also allowed. A missing or other origin is `403 origin not allowed`, sent **without** CORS headers.
 4. **Preflight:** an `OPTIONS` from an allowed origin is answered `204` with:
    - `Access-Control-Allow-Origin: <origin>`, `Vary: Origin`
-   - `Access-Control-Allow-Methods: POST, OPTIONS`
+   - `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`
    - `Access-Control-Allow-Headers: Content-Type, X-Bridge-Token, X-Slicc-Raw-Request, X-Slicc-Raw-Probe`
    - `Access-Control-Expose-Headers: X-Proxy-Error`
    - `Access-Control-Max-Age: 600`
    - `Access-Control-Allow-Private-Network: true` when the preflight carries `Access-Control-Request-Private-Network: true` (Private Network Access). Chrome 142 and later asks the user instead (Local Network Access); the header is harmless there.
-5. **Method:** anything but `POST` is `405 method not allowed`, with `Allow: POST, OPTIONS`.
+5. **Method:** each path takes only its own methods (see **Path**); any other is `405 method not allowed`, with `Allow` listing them and `OPTIONS`.
 6. **Key:** `X-Bridge-Token` must equal the key, compared in constant time; otherwise `403 proxy key missing or wrong`. The key is never accepted in a query string.
 
 From step 5 on, every answer carries `Access-Control-Allow-Origin`, `Access-Control-Expose-Headers` and `Vary`, so the page can read refusals.
@@ -98,7 +98,7 @@ Some identity providers allowlist only one redirect target. Adobe IMS, for examp
 2. **Callback:** the relay's redirect lands on `GET /auth/callback?nonce=…#access_token=…`. Only the host check applies, because a top-level navigation carries no `Origin`. Each nonce gets this page once; an unknown, used or expired nonce gets a `403` page. The page removes the fragment from its address and sends `{ nonce, redirectUrl }` back to its own origin with `POST /auth/callback`. The proxy takes that only from `Origin: http://localhost:<port>` (or another loopback name with its port), only after the page was served, only once, and only when `redirectUrl` carries the same nonce. The page's CSP allows its one inline script by hash and `connect-src 'self'`, and nothing else.
 3. **Collect:** the page that registered the nonce polls `GET /api/oauth-result?nonce=…` through the same gate as `/api/fetch-proxy`. The answer is `204` while the sign-in is pending and `200 { "redirectUrl": … }` once. After that, and for an unknown or expired nonce or another origin, it is `404`. `DELETE /api/oauth-state?nonce=…` drops a sign-in the page cancelled.
 4. **No opener:** SLICC pages are cross-origin isolated (`Cross-Origin-Opener-Policy: same-origin`), so a popup that navigated to the identity provider has no `window.opener`. Polling works anyway.
-5. **The token is kept only in memory.** It is deleted on the first `200` or when the nonce expires after 10 minutes, whichever comes first. It is never written to disk, and no log line or error message includes it.
+5. **The token is kept only in memory.** It is deleted on the first `200` or by a timer when the nonce expires after 10 minutes, whichever comes first, even if nothing else reaches the proxy. It is never written to disk, and no log line or error message includes it.
 
 Chrome's Local Network Access doesn't apply to the popup's top-level navigation to `localhost`.
 

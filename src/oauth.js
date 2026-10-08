@@ -7,18 +7,27 @@ export function validNonce(nonce) {
   return typeof nonce === 'string' && NONCE.test(nonce);
 }
 
-export function createOAuthStates(now = Date.now) {
+export function createOAuthStates(
+  now = Date.now,
+  timers = { set: setTimeout, clear: clearTimeout }
+) {
   const states = new Map();
+  const forget = (nonce) => {
+    timers.clear(states.get(nonce)?.timer);
+    states.delete(nonce);
+  };
   const live = (nonce) => {
     for (const [key, state] of states) {
-      if (now() - state.at > OAUTH_TTL) states.delete(key);
+      if (now() - state.at > OAUTH_TTL) forget(key);
     }
     return states.get(nonce);
   };
   return {
     expect(nonce, origin) {
-      live(nonce);
-      states.set(nonce, { origin, at: now(), visited: false, result: null });
+      if (live(nonce)) forget(nonce);
+      const timer = timers.set(() => states.delete(nonce), OAUTH_TTL);
+      timer?.unref?.();
+      states.set(nonce, { origin, at: now(), visited: false, result: null, timer });
     },
     visit(nonce) {
       const state = live(nonce);
@@ -36,11 +45,11 @@ export function createOAuthStates(now = Date.now) {
       const state = live(nonce);
       if (!state || state.origin !== origin) return null;
       if (state.result === null) return { pending: true };
-      states.delete(nonce);
+      forget(nonce);
       return { redirectUrl: state.result };
     },
     drop(nonce, origin) {
-      if (live(nonce)?.origin === origin) states.delete(nonce);
+      if (live(nonce)?.origin === origin) forget(nonce);
     },
   };
 }
