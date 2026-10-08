@@ -3,6 +3,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 
 export const WATCH_DEBOUNCE = 50;
 export const WATCH_MAX_PATHS = 256;
+export const WATCH_RESTART = 1000;
 
 export function relativeName(root, filename) {
   if (filename === null || filename === undefined || filename === '') return null;
@@ -20,6 +21,7 @@ export function changedPaths(rel) {
 export function createWatchers({
   debounce = WATCH_DEBOUNCE,
   maxPaths = WATCH_MAX_PATHS,
+  restart = WATCH_RESTART,
   watchFn = watch,
 } = {}) {
   const folders = new Map();
@@ -52,7 +54,7 @@ export function createWatchers({
       entry.watcher.on('error', () => {
         entry.watcher.close();
         note(entry, null);
-        start(entry);
+        entry.retry = setTimeout(() => start(entry), restart);
       });
     } catch {
       entry.watcher = null;
@@ -74,12 +76,14 @@ export function createWatchers({
         if (entry.listeners.size > 0) return;
         folders.delete(root);
         clearTimeout(entry.timer);
+        clearTimeout(entry.retry);
         entry.watcher?.close();
       };
     },
     close() {
       for (const entry of folders.values()) {
         clearTimeout(entry.timer);
+        clearTimeout(entry.retry);
         entry.watcher?.close();
       }
       folders.clear();
