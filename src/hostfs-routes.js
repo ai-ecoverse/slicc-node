@@ -37,6 +37,7 @@ const STREAM_BACKLOG = 1024 * 1024;
 const TOKEN = HOSTFS_TOKEN_HEADER.toLowerCase();
 const REQUEST = HOSTFS_REQUEST_HEADER.toLowerCase();
 const NAME = /^[^/\\\0]+$/;
+const NORMALIZATION = process.platform === 'darwin' ? 'nfd-insensitive' : 'none';
 
 export const HOSTFS_KEY_PATHS = {
   [HOSTFS_GRANT_PATH]: ['POST', 'DELETE'],
@@ -98,7 +99,7 @@ export async function loadFolders(specs, warn = () => {}) {
         symlinks: process.platform !== 'win32',
         chmod: process.platform !== 'win32',
         caseInsensitive: await probeCase(root),
-        normalization: process.platform === 'darwin' ? 'nfd-insensitive' : 'none',
+        normalization: NORMALIZATION,
       },
     });
   }
@@ -274,9 +275,7 @@ export function createHostfs({
     const opened = await (writing ? lock.exclusive : lock.shared)(() =>
       openFile(grant.folder.root, body)
     );
-    const entry = writing
-      ? { file: opened.handle, path: body.path }
-      : { path: body.path ?? '', etag: etagOf(opened.stats) };
+    const entry = { file: writing ? opened.handle : null, path: body.path ?? '' };
     if (!writing) await opened.handle.close();
     const fh = addHandle(grant, entry);
     if (fh === null) {
