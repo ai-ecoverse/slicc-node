@@ -40,7 +40,7 @@ This is the contract a local proxy implements, so slicc-node and [slicc-swift](h
 Every request to the proxy passes these checks in order. Each refusal is a JSON `{ "error": "<reason>" }` with `X-Proxy-Error: 1`.
 
 1. **Host:** `Host` must be `127.0.0.1`, `localhost` or `[::1]` with the proxy's port; otherwise `403 host not allowed`. This blocks DNS rebinding.
-2. **Path:** only `/api/fetch-proxy`; anything else is `404 not found`.
+2. **Path:** `/api/fetch-proxy` and `/api/oauth-state`; `/auth/callback` skips the rest of the gate (see [Sign-in callback](#sign-in-callback)); anything else is `404 not found`.
 3. **Origin:** `Origin` must be `https://<label>.sliccy.ai`, where `<label>` is one DNS label other than `www`. That covers `seven` and the branch hosts slicc-bios deploys. Origins added with `--origin` (normalized, exact match) are also allowed. A missing or other origin is `403 origin not allowed`, sent **without** CORS headers.
 4. **Preflight:** an `OPTIONS` from an allowed origin is answered `204` with:
    - `Access-Control-Allow-Origin: <origin>`, `Vary: Origin`
@@ -89,6 +89,16 @@ Once the upstream answers, the proxy answers `200` with `Content-Type: applicati
 3. the upstream body, streamed until the hop ends. It is decoded: when the proxy undid every listed coding, it drops `Content-Encoding` and `Content-Length`. A response without a body (`HEAD`, `1xx`, `204`, `205`, `304`) keeps both as sent and has no bytes after the head.
 
 If the upstream cannot be reached, the answer is `502 fetch failed: <reason>`. A `206` with a coding the proxy decoded is also `502`, because its `Content-Range` would no longer match the bytes. If the upstream breaks mid-body, the proxy drops the hop's connection.
+
+### Sign-in callback
+
+Some identity providers allowlist only one redirect target. Adobe IMS, for example, redirects only to `https://www.sliccy.ai/auth/callback`, a relay that forwards the implicit-flow result to `http://localhost:<port>/auth/callback` when the OAuth `state` asks for it (`{ source: 'local', port, path: '/auth/callback', nonce }`). A local proxy hands that result to the page:
+
+1. **Register:** before opening the sign-in popup, the page sends `POST /api/oauth-state` with the key and `{ "nonce": "<16–128 url-safe characters>" }`. This passes the same gate as `/api/fetch-proxy` (host, origin, key) and answers `204`. The proxy remembers the nonce with the page's `Origin` for 10 minutes.
+2. **Callback:** the relay's redirect lands on `GET /auth/callback?nonce=…#access_token=…`. Only the host check applies, because a top-level navigation carries no `Origin`. The nonce is taken once: an unknown, used or expired nonce gets a `403` page. A known one gets a page that sends `{ type: 'oauth-callback', redirectUrl: location.href }` to `window.opener` with `postMessage`, targeted at exactly the origin that registered the nonce (never `*`), and then closes. Its CSP allows that one inline script by hash and nothing else.
+3. **The token stays in the URL fragment**, which browsers never send to a server, so the proxy never sees or logs it. The page accepts the message only from the proxy's origin (`http://localhost:<port>`), only from the popup it opened, and only with the nonce it registered.
+
+Chrome's Local Network Access doesn't apply to the popup's top-level navigation to `localhost`.
 
 ## The rest of node-server
 

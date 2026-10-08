@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
+import { callbackPage, createOAuthStates, refusedPage, validNonce } from './oauth.js';
 import {
   decodeRequestHead,
   ERROR_HEADER,
@@ -10,6 +11,8 @@ import {
   KEY_HEADER,
   MAX_HEADER_BYTES,
   MAX_REQUEST_BODY,
+  OAUTH_CALLBACK_PATH,
+  OAUTH_STATE_PATH,
   RAW_CONTENT_TYPE,
   RAW_PROBE_HEADER,
   RAW_PROTOCOL_VERSION,
@@ -129,14 +132,52 @@ async function relay(req, res, cors, options) {
   stream.pipe(res);
 }
 
+function page(res, status, { headers, body }) {
+  res.writeHead(status, headers);
+  res.end(body);
+}
+
+function callback(req, res, url, states) {
+  if (req.method !== 'GET') {
+    fail(res, 405, 'method not allowed', { Allow: 'GET' });
+    return;
+  }
+  const nonce = url.searchParams.get('nonce');
+  const origin = validNonce(nonce) ? states.take(nonce) : null;
+  if (origin) page(res, 200, callbackPage(origin));
+  else page(res, 403, refusedPage);
+}
+
+async function expectState(req, res, cors, states) {
+  let nonce;
+  try {
+    nonce = JSON.parse((await readBody(req, 1024)).toString()).nonce;
+  } catch {
+    nonce = undefined;
+  }
+  if (!validNonce(nonce)) {
+    fail(res, 400, 'nonce missing or malformed', cors);
+    return;
+  }
+  states.expect(nonce, req.headers.origin);
+  res.writeHead(204, { ...cors, 'Cache-Control': 'no-store' });
+  res.end();
+}
+
 export function handler(options) {
+  const states = options.states ?? createOAuthStates();
   return (req, res) => {
-    const path = new URL(req.url, 'http://localhost').pathname;
+    const url = new URL(req.url, 'http://localhost');
+    const path = url.pathname;
     if (!isLoopbackHost(req.headers.host, options.port())) {
       fail(res, 403, 'host not allowed');
       return;
     }
-    if (path !== FETCH_PROXY_PATH) {
+    if (path === OAUTH_CALLBACK_PATH) {
+      callback(req, res, url, states);
+      return;
+    }
+    if (path !== FETCH_PROXY_PATH && path !== OAUTH_STATE_PATH) {
       fail(res, 404, 'not found');
       return;
     }
@@ -158,6 +199,10 @@ export function handler(options) {
     }
     if (!validKey(req.headers[KEY], options.key)) {
       fail(res, 403, 'proxy key missing or wrong', cors);
+      return;
+    }
+    if (path === OAUTH_STATE_PATH) {
+      void expectState(req, res, cors, states);
       return;
     }
     if (req.headers[RAW_REQUEST] === undefined) {

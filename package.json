@@ -35,6 +35,7 @@
     "prepare": "lefthook install",
     "lint": "slicc-lint",
     "format": "biome check --write .",
+    "pretest": "playwright-core install --no-shell chromium",
     "test": "node --test 'test/integration/*.test.mjs'",
     "trust": "npx fledgling sync -y --skip-publish",
     "trust:dry": "npx fledgling sync --dry-run -y --skip-publish",
@@ -46,6 +47,7 @@
     "@biomejs/biome": "2.5.15",
     "lefthook": "2.1.16",
     "monocart-coverage-reports": "2.13.0",
+    "playwright-core": "1.60.0",
     "semantic-release": "25.0.9"
   }
 }
