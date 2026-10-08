@@ -1,4 +1,6 @@
 export const FETCH_PROXY_PATH = '/api/fetch-proxy';
+export const OAUTH_STATE_PATH = '/api/oauth-state';
+export const OAUTH_CALLBACK_PATH = '/auth/callback';
 export const RAW_REQUEST_HEADER = 'X-Slicc-Raw-Request';
 export const RAW_PROBE_HEADER = 'X-Slicc-Raw-Probe';
 export const RAW_CONTENT_TYPE = 'application/vnd.slicc.raw-fetch';
