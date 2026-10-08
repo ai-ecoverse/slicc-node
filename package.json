@@ -47,7 +47,7 @@
     "@biomejs/biome": "2.5.15",
     "lefthook": "2.1.16",
     "monocart-coverage-reports": "2.13.0",
-    "playwright-core": "1.60.0",
+    "playwright-core": "1.63.0",
     "semantic-release": "25.0.9"
   }
 }
