@@ -40,8 +40,12 @@ export function hop(
   { method = 'POST', path = '/api/fetch-proxy', headers = {}, body } = {}
 ) {
   const target = new URL(path, proxy.url);
+  const sized =
+    body === undefined || 'Content-Length' in headers
+      ? headers
+      : { ...headers, 'Content-Length': Buffer.byteLength(body) };
   return new Promise((resolve, reject) => {
-    const req = request(target, { method, headers }, (res) => {
+    const req = request(target, { method, headers: sized }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () =>

@@ -26,7 +26,10 @@ test('an allowed origin with the key gets the probe reply and CORS', async () =>
   const res = await probe({ Origin: seven, 'X-Bridge-Token': proxy.key });
   assert.equal(res.status, 200);
   assert.equal(res.headers['access-control-allow-origin'], seven);
-  assert.equal(res.headers['access-control-expose-headers'], 'X-Proxy-Error');
+  assert.equal(
+    res.headers['access-control-expose-headers'],
+    'X-Proxy-Error, X-Hostfs-Errno, ETag, Content-Range'
+  );
   assert.deepEqual(JSON.parse(res.body), {
     rawFetch: 1,
     requestBodyStreaming: false,
@@ -89,10 +92,10 @@ test('the preflight allows the transport headers and the private network', async
   });
   assert.equal(res.status, 204);
   assert.equal(res.headers['access-control-allow-origin'], seven);
-  assert.equal(res.headers['access-control-allow-methods'], 'GET, POST, DELETE, OPTIONS');
+  assert.equal(res.headers['access-control-allow-methods'], 'GET, POST, PUT, DELETE, OPTIONS');
   assert.equal(
     res.headers['access-control-allow-headers'],
-    'Content-Type, X-Bridge-Token, X-Slicc-Raw-Request, X-Slicc-Raw-Probe'
+    'Content-Type, X-Bridge-Token, X-Slicc-Raw-Request, X-Slicc-Raw-Probe, X-Hostfs-Token, X-Hostfs-Request'
   );
   assert.equal(res.headers['access-control-allow-private-network'], 'true');
   const plain = await hop(proxy, {
