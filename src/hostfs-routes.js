@@ -1,5 +1,5 @@
 import { constants, createReadStream } from 'node:fs';
-import { open, realpath, stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import {
@@ -11,9 +11,9 @@ import {
   MAX_IO,
   MAX_OP_BODY,
   openFile,
+  openLeaf,
   pathOp,
   probeCase,
-  resolvePath,
   WRITING_OPS,
   wantsWrite,
   writeAll,
@@ -136,8 +136,7 @@ function handleOf(grant, fh) {
 
 async function pinned(grant, entry) {
   if (entry.file) return { file: entry.file, owned: false };
-  const target = await resolvePath(grant.folder.root, entry.path);
-  const file = await open(target.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await openLeaf(grant.folder.root, entry.path, constants.O_RDONLY);
   return { file, owned: true };
 }
 
@@ -226,8 +225,8 @@ function watch({ grants, watchers }, found, res, cors) {
     else res.write(`${JSON.stringify(value)}\n`);
   };
   for (const grant of found) cleanups.push(grants.stream(grant, end));
-  const roots = new Map(found.map((grant) => [grant.folder.root, grant.folder.name]));
-  for (const [root, mount] of roots)
+  const mounts = new Map(found.map((grant) => [grant.folder.name, grant.folder.root]));
+  for (const [mount, root] of mounts)
     cleanups.push(watchers.subscribe(root, (event) => line({ mount, ...event })));
   const ping = setInterval(() => line({ ping: 1 }), PING_INTERVAL);
   ping.unref();

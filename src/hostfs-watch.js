@@ -46,19 +46,27 @@ export function createWatchers({
     entry.timer ??= setTimeout(() => flush(entry), debounce);
   };
 
+  const lost = (entry) => {
+    entry.watcher = null;
+    if (!entry.lost) note(entry, null);
+    entry.lost = true;
+    entry.retry = setTimeout(() => start(entry), restart);
+  };
+
   const start = (entry) => {
     try {
-      entry.watcher = watchFn(entry.root, { recursive: true }, (_type, filename) =>
+      const watcher = watchFn(entry.root, { recursive: true }, (_type, filename) =>
         note(entry, relativeName(entry.root, filename))
       );
-      entry.watcher.on('error', () => {
-        entry.watcher.close();
-        note(entry, null);
-        entry.retry = setTimeout(() => start(entry), restart);
+      watcher.on('error', () => {
+        watcher.close();
+        lost(entry);
       });
+      entry.watcher = watcher;
+      if (entry.lost) note(entry, null);
+      entry.lost = false;
     } catch {
-      entry.watcher = null;
-      note(entry, null);
+      lost(entry);
     }
   };
 

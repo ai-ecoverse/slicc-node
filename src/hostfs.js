@@ -210,16 +210,21 @@ export function wantsWrite(body) {
   return Boolean(body.write || body.create || body.truncate || body.exclusive);
 }
 
+export async function openLeaf(root, rel, flags, mode) {
+  const target = await resolvePath(root, rel);
+  const leaf = await lstat(target.path).catch(() => null);
+  if (leaf?.isSymbolicLink()) throw new HostfsError('ELOOP', 'is a symlink');
+  return open(target.path, flags | OPEN_FLAGS, mode);
+}
+
 export async function openFile(root, body) {
-  const target = await resolvePath(root, body.path ?? '');
-  if (target.root) throw new HostfsError('EISDIR');
   const writing = wantsWrite(body);
   if (body.mode !== undefined && !validMode(body.mode)) throw new HostfsError('EINVAL');
-  let flags = OPEN_FLAGS | (writing ? constants.O_RDWR : constants.O_RDONLY);
+  let flags = writing ? constants.O_RDWR : constants.O_RDONLY;
   if (body.create) flags |= constants.O_CREAT;
   if (body.create && body.exclusive) flags |= constants.O_EXCL;
   if (body.truncate) flags |= constants.O_TRUNC;
-  const handle = await open(target.path, flags, body.mode ?? 0o666);
+  const handle = await openLeaf(root, body.path ?? '', flags, body.mode ?? 0o666);
   try {
     const stats = await handle.stat({ bigint: true });
     if (stats.isDirectory()) throw new HostfsError('EISDIR');
