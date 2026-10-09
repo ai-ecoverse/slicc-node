@@ -357,7 +357,8 @@ export function upgrader(options) {
   };
 }
 
-async function openKernel(options, host, tunnels, log) {
+async function openKernel(options, tunnels, log) {
+  const host = '127.0.0.1';
   const port = options.kernelPort === undefined ? KERNEL_PORT : options.kernelPort;
   if (port === null) return null;
   try {
@@ -400,7 +401,7 @@ export async function startProxy(options = {}) {
     server.listen(options.port ?? 0, host, resolve);
   });
   port = server.address().port;
-  const kernel = await openKernel(options, host, tunnels, log);
+  const kernel = await openKernel(options, tunnels, log);
   kernelPort = kernel ? kernel.port : null;
   const name = host.includes(':') ? `[${host}]` : host;
   return {

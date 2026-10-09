@@ -248,7 +248,7 @@ Every message is binary (a text message closes the tunnel with `1003`): a `u8` t
 
 **Security.**
 - The `Host` allowlist on the listener defends against DNS rebinding. Only a page holding the key, on an allowed origin, can register a tunnel.
-- Kernel services are exposed like any dev server on localhost: any local process can reach them on the kernel port, and so can any web page Chrome lets reach loopback (a public page goes through Local Network Access first). Nothing listens beyond `127.0.0.1`. Run with `--no-kernel` to keep them inside the page.
+- Kernel services are exposed like any dev server on localhost: any local process can reach them on the kernel port, and so can any web page Chrome lets reach loopback (a public page goes through Local Network Access first). The listener binds `127.0.0.1` even when `startProxy` is given another `host`. Run with `--no-kernel` to keep them inside the page.
 
 ## The rest of node-server
 

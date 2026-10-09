@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { Agent, createServer, request } from 'node:http';
 import { connect, createServer as createTcpServer } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { after, before, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -422,4 +423,23 @@ test('a browser that drops a live connection resets the stream', async () => {
   while (!tab.seen.resets.has(id)) await sleep(5);
   assert.equal(tab.seen.resets.get(id), 'closed');
   await tab.close();
+});
+
+test('the kernel listener stays on loopback when the proxy listens wider', async () => {
+  const wide = await startProxy({ host: '0.0.0.0', kernelPort: 0 });
+  const external = Object.values(networkInterfaces())
+    .flat()
+    .find((nic) => nic.family === 'IPv4' && !nic.internal);
+  try {
+    const ok = connect(wide.kernelPort, '127.0.0.1');
+    await once(ok, 'connect');
+    ok.destroy();
+    if (external) {
+      const refused = connect(wide.kernelPort, external.address);
+      const [err] = await once(refused, 'error');
+      assert.equal(err.code, 'ECONNREFUSED');
+    }
+  } finally {
+    await wide.close();
+  }
 });
