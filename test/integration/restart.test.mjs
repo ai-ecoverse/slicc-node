@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -123,11 +133,14 @@ test('a broken or loose key file is repaired', async () => {
   assert.equal((await readFile(file, 'utf8')).trim(), fresh.key);
   if (process.platform === 'win32') return;
   await chmod(file, 0o644);
+  await chmod(join(dir, 'slicc-node'), 0o777);
   const tightened = await slicc(['--port', port], { config: dir });
   await tightened.stop();
   assert.equal(tightened.key, fresh.key);
   assert.match(tightened.stderr(), /was readable by others; it is 0600 now/);
+  assert.match(tightened.stderr(), /was open to others; it is 0700 now/);
   assert.equal((await stat(file)).mode & 0o777, 0o600);
+  assert.equal((await stat(join(dir, 'slicc-node'))).mode & 0o777, 0o700);
 });
 
 test('the default port is fixed, with a free port as fallback when it is taken', async () => {
@@ -160,4 +173,16 @@ test('an explicit port that is taken stops slicc-node', async () => {
   } finally {
     blocker.close();
   }
+});
+
+test('two first starts at once agree on one stored key', async () => {
+  const dir = join(base, 'race');
+  const [one, two] = await Promise.all([
+    slicc(['--port', String(await freePort())], { config: dir }),
+    slicc(['--port', String(await freePort())], { config: dir }),
+  ]);
+  await Promise.all([one.stop(), two.stop()]);
+  assert.equal(one.key, two.key);
+  assert.equal((await readFile(join(dir, 'slicc-node', 'key'), 'utf8')).trim(), one.key);
+  assert.deepEqual(await readdir(join(dir, 'slicc-node')), ['key']);
 });
