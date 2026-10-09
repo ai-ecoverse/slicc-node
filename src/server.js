@@ -371,6 +371,16 @@ async function openKernel(options, tunnels, log) {
   }
 }
 
+function listen(server, port, host) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
 export async function startProxy(options = {}) {
   const host = options.host ?? '127.0.0.1';
   const key = options.key ?? mintKey();
@@ -396,10 +406,15 @@ export async function startProxy(options = {}) {
     })
   );
   server.on('upgrade', upgrader({ ...shared, tunnels }));
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(options.port ?? 0, host, resolve);
-  });
+  try {
+    await listen(server, options.port ?? 0, host);
+  } catch (err) {
+    if (err.code !== 'EADDRINUSE' || !options.portFallback) throw err;
+    (options.warn ?? log)(
+      `port ${options.port} is taken; using a free port, so pages from an earlier launch cannot reconnect`
+    );
+    await listen(server, 0, host);
+  }
   port = server.address().port;
   const kernel = await openKernel(options, tunnels, log);
   kernelPort = kernel ? kernel.port : null;
