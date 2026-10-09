@@ -13,8 +13,9 @@ import {
 import { seven } from './page.mjs';
 import { hop } from './proxy.mjs';
 
-async function fakeBrowser() {
+async function fakeBrowser(socketURL) {
   const hits = { n: 0 };
+  const upgrades = { n: 0 };
   const server = createServer((req, res) => {
     if (req.url !== '/json/version') {
       res.writeHead(404);
@@ -23,13 +24,16 @@ async function fakeBrowser() {
     }
     hits.n += 1;
     const { port } = server.address();
+    const advertised =
+      socketURL === 'wss'
+        ? `wss://127.0.0.1:${port}/devtools/browser/test`
+        : (socketURL ?? `ws://127.0.0.1:${port}/devtools/browser/test`);
     res.setHeader('Content-Type', 'application/json');
-    res.end(
-      JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/test` })
-    );
+    res.end(JSON.stringify({ webSocketDebuggerUrl: advertised }));
   });
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
+    upgrades.n += 1;
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
   server.listen(0, '127.0.0.1');
@@ -37,6 +41,7 @@ async function fakeBrowser() {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     hits,
+    upgrades,
     wss,
     close: () =>
       new Promise((resolve) => {
@@ -188,4 +193,34 @@ test('a text frame is relayed to the browser socket and back', async () => {
   await proxy.close();
   await browser.close();
   assert.ok(lines.some((line) => line.startsWith('cdp browser reconnecting')));
+});
+
+test('a wss debugger URL is refused before a dial', async () => {
+  const browser = await fakeBrowser('wss');
+  const socketURL = `wss://127.0.0.1:${new URL(browser.url).port}/devtools/browser/test`;
+  const lines = [];
+  const proxy = await startProxy({
+    kernelPort: null,
+    cdp: browser.url,
+    log: (line) => lines.push(line),
+  });
+  try {
+    const client = cdpSocket(proxy);
+    const closed = once(client, 'close');
+    await open(client);
+    await closed;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(browser.hits.n, 1);
+    assert.equal(browser.upgrades.n, 0);
+    assert.ok(
+      lines.some((line) =>
+        line.includes(
+          `webSocketDebuggerUrl ${socketURL} is not supported; only ws:// debugging URLs are supported`
+        )
+      )
+    );
+  } finally {
+    await proxy.close();
+    await browser.close();
+  }
 });
