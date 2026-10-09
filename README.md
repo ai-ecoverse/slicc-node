@@ -16,6 +16,7 @@ This starts the proxy on `127.0.0.1:17117` with its proxy key and opens `https:/
 | `--mount <path>[:<name>][:ro]` | share a folder with the page (repeatable), under `<name>` (default: its basename), read-only with `:ro`; see [Host folders](#host-folders) |
 | `--kernel-port <n>` | port on `127.0.0.1` for `http://<port>.kernel.localhost/`, default `80`; see [Kernel services](#kernel-services) |
 | `--no-kernel` | do not serve the page's kernel on `<port>.kernel.localhost` |
+| `--cdp <url>` | relay `/cdp` to a browser already listening at this HTTP debugging URL, such as `http://127.0.0.1:9222` |
 | `--rotate-key` | replace the stored key, so pages and launch URLs holding the old one stop working |
 | `--ephemeral` | use a fresh key and any free port, and store nothing: the key dies with the process |
 | `--no-open` | print the URL without opening a browser |
@@ -29,7 +30,7 @@ console.log(launchUrl('https://seven.sliccy.ai/', proxy));
 await proxy.close();
 ```
 
-`startProxy` mints a fresh key unless given one; `persistentKey({ dir, rotate, warn })` returns the stored one, creating it if needed, and `configDir()` names the directory. `startProxy` also takes `key`, `portFallback` (listen on any free port when `port` is taken), `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off) and `kernelOpenTimeout` (ms, default 10 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
+`startProxy` mints a fresh key unless given one; `persistentKey({ dir, rotate, warn })` returns the stored one, creating it if needed, and `configDir()` names the directory. `startProxy` also takes `key`, `portFallback` (listen on any free port when `port` is taken), `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off), `kernelOpenTimeout` (ms, default 10 s), `cdp` (HTTP debugging URL of a browser already running) and `cdpReconnectDelay` (ms, default 1 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
 
 ## Protocol
 
@@ -54,7 +55,7 @@ The page stores `{ url, key }` from the launch fragment. A local proxy keeps bot
 Every request to the proxy passes these checks in order. Each refusal is a JSON `{ "error": "<reason>" }` with `X-Proxy-Error: 1`.
 
 1. **Host:** `Host` must be `127.0.0.1`, `localhost` or `[::1]` with the proxy's port; otherwise `403 host not allowed`. This blocks DNS rebinding.
-2. **Path:** `/api/fetch-proxy` (`POST`), `/api/oauth-state` (`POST`, `DELETE`), `/api/oauth-result` (`GET`) and the [host folder](#host-folders) paths, each refusing other methods with `405`; `/api/kernel-tunnel` takes only a WebSocket upgrade (see [Kernel services](#kernel-services)), and so does no other path; `/auth/callback` skips the rest of the gate (see [Sign-in callback](#sign-in-callback)); anything else is `404 not found`.
+2. **Path:** `/api/fetch-proxy` (`POST`), `/api/oauth-state` (`POST`, `DELETE`), `/api/oauth-result` (`GET`) and the [host folder](#host-folders) paths, each refusing other methods with `405`; `/api/kernel-tunnel` and `/cdp` take only a WebSocket upgrade (see [Kernel services](#kernel-services) and [Browser debugging](#browser-debugging)), and so does no other path; `/auth/callback` skips the rest of the gate (see [Sign-in callback](#sign-in-callback)); anything else is `404 not found`.
 3. **Origin:** `Origin` must be `https://<label>.sliccy.ai`, where `<label>` is one DNS label other than `www`. That covers `seven` and the branch hosts slicc-bios deploys. Origins added with `--origin` (normalized, exact match) are also allowed. A missing or other origin is `403 origin not allowed`, sent **without** CORS headers.
 4. **Preflight:** an `OPTIONS` from an allowed origin is answered `204` with:
    - `Access-Control-Allow-Origin: <origin>`, `Vary: Origin`
@@ -76,7 +77,7 @@ From step 5 on, every answer carries `Access-Control-Allow-Origin`, `Access-Cont
 { "rawFetch": 1, "requestBodyStreaming": false, "maxRequestBodyBytes": 268435456 }
 ```
 
-With at least one folder exported, it adds `"hostfs": 1`. With the [kernel listener](#kernel-services) up, it adds `"kernelTunnel": 1, "kernelPort": <port>`.
+With at least one folder exported, it adds `"hostfs": 1`. With the [kernel listener](#kernel-services) up, it adds `"kernelTunnel": 1, "kernelPort": <port>`. With a [browser debugging URL](#browser-debugging), it adds `"cdp": 1`.
 
 ### Request
 
@@ -263,11 +264,23 @@ Every message is binary (a text message closes the tunnel with `1003`): a `u8` t
 - The `Host` allowlist on the listener defends against DNS rebinding. Only a page holding the key, on an allowed origin, can register a tunnel.
 - Kernel services are exposed like any dev server on localhost: any local process can reach them on the kernel port, and so can any web page Chrome lets reach loopback (a public page goes through Local Network Access first). The listener binds `127.0.0.1` even when `startProxy` is given another `host`. Run with `--no-kernel` to keep them inside the page.
 
+### Browser debugging
+
+`--cdp <url>` names an already-running browser's HTTP debugging endpoint, such as `http://127.0.0.1:9222`. slicc-node does not launch the browser and does not listen on another port. The probe then adds `"cdp": 1`.
+
+The page opens `ws://127.0.0.1:<proxy port>/cdp` with the subprotocols `slicc.cdp.v1` and `slicc.key.<key>`, since a browser cannot set headers on a WebSocket. Before upgrading, the proxy checks the loopback `Host` (`403 host not allowed`), the path and that a debugging URL was given (`404`), the `Origin` as in [Gate](#gate) (`403 origin not allowed`), that `slicc.cdp.v1` is offered (`400 subprotocol slicc.cdp.v1 missing`) and the key in constant time (`403 proxy key missing or wrong`). It selects `slicc.cdp.v1`, so the key is never echoed. A key in the query string or in `X-Bridge-Token` is ignored.
+
+Text frames are relayed as they are. The browser socket is `webSocketDebuggerUrl` from `GET <url>/json/version`. One page holds the slot. A second page closes the first with code `4001` and reason `superseded-by-new-cdp-client`, and the first page must not dial again. A frame from a page that has lost the slot is dropped.
+
+When the browser socket closes, the proxy reads `/json/version` again every 1 s until the socket is back or the process stops. Frames sent in the gap are held, at most 1 000, and the oldest is dropped past that. They are forwarded only when they still belong to that same browser connection and that same page. Frames held across the drop are discarded, because the browser has forgotten those sessions. The page that held the slot when the socket died is then closed with code `4002` and reason `upstream-reset`, so it dials again with no cached session ids. A page that connected during the gap is left open, and the frames it held are sent. After three failed attempts the current page is closed once with `4002`, and the proxy keeps reading `/json/version`. `Network.webSocketFrameReceived` and `Network.webSocketFrameSent` are not relayed, and neither is a frame over 64 MiB.
+
+The browser already speaks flattened sessions (`Target.attachToTarget` with `flatten: true`, then a top-level `sessionId`). This proxy does not implement `Target.*`.
+
 ## The rest of node-server
 
 SLICC's `packages/node-server` (about 12k lines in `src/`) does much more than this proxy. Here is what it does, in the order proposed for moving it:
 
-1. **CDP bridge** (`index.ts` `/cdp`, `cdp-proxy/`, `chrome-launch.ts`, `browser-shutdown.ts`): it launches Chrome and proxies CDP to the page over a WebSocket. The same origin and key gate applies, with the key in `Sec-WebSocket-Protocol: slicc.bridge.v1.<key>`. This one goes next, for ai-ecoverse/slicc-cdp.
+1. **CDP bridge**: the `/cdp` relay, the single-client slot and the reconnect are in [Browser debugging](#browser-debugging). Launching Chrome (`chrome-launch.ts`, `browser-shutdown.ts`), secret unmasking, Electron, hosted leaders, cloud status and the tray stay in the monorepo.
 2. **Host folders** (`hostfs.ts`, `hostfs-watch.ts`, `--mount`): done, as the new protocol in [Host folders](#host-folders) rather than a port.
 3. **Secrets** (`secrets/`, `routes/secrets.ts`, `routes/oauth-callback.ts`, `sudo/`): masked secrets unmasked per domain in the default `/api/fetch-proxy`, HMAC signing, OAuth replicas and the sudo prompt. Raw mode here leaves secrets out; they come back with this step.
 4. **Licks and handoff** (`routes/lick-*.ts`, `routes/handoff.ts`, `links-middleware.ts`, `routes/agent-activity.ts`): webhooks and events into the agent, plus activity tracking.

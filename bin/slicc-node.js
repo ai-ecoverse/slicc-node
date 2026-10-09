@@ -22,6 +22,7 @@ port stay the same across restarts, so an open SLICC page reconnects.
                     share a folder with the page, repeatable
   --kernel-port <n> port for http://<port>.kernel.localhost/ (default 80)
   --no-kernel       do not serve the page's kernel on <port>.kernel.localhost
+  --cdp <url>       HTTP debugging URL of a browser already running, such as http://127.0.0.1:9222
   --rotate-key      replace the stored key, so earlier launch URLs stop working
   --ephemeral       use a fresh key and any free port, and store nothing
   --no-open         print the URL without opening a browser
@@ -37,6 +38,7 @@ const { values } = parseArgs({
     mount: { type: 'string', multiple: true, default: [] },
     'kernel-port': { type: 'string', default: '80' },
     kernel: { type: 'boolean', default: true },
+    cdp: { type: 'string' },
     'rotate-key': { type: 'boolean', default: false },
     ephemeral: { type: 'boolean', default: false },
     open: { type: 'boolean', default: true },
@@ -69,6 +71,7 @@ try {
     origins: [...values.origin, new URL(values.page).origin],
     mounts: values.mount,
     kernelPort: values.kernel ? Number(values['kernel-port']) : null,
+    cdp: values.cdp,
     log: values.quiet ? undefined : warn,
     warn,
   });
@@ -82,6 +85,7 @@ if (proxy.kernelPort !== null) {
   const suffix = proxy.kernelPort === 80 ? '' : `:${proxy.kernelPort}`;
   process.stderr.write(`kernel services on http://<port>.kernel.localhost${suffix}/\n`);
 }
+if (values.cdp) process.stderr.write(`cdp proxy for ${values.cdp}\n`);
 if (values.open && !(await openBrowser(url)))
   process.stderr.write('could not open a browser; open the URL above\n');
 

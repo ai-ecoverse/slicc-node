@@ -1,5 +1,6 @@
 import { createServer, STATUS_CODES } from 'node:http';
 import { Readable } from 'node:stream';
+import { browserEndpoint, createCdp, offeredCdpKey } from './cdp.js';
 import {
   createHostfs,
   HOSTFS_KEY_PATHS,
@@ -10,6 +11,9 @@ import { fail, readBody, TooLarge } from './http.js';
 import { listenKernel } from './kernel.js';
 import { callbackPage, createOAuthStates, refusedPage, validNonce } from './oauth.js';
 import {
+  CDP_PATH,
+  CDP_PROTOCOL,
+  CDP_PROTOCOL_VERSION,
   decodeRequestHead,
   ERROR_HEADER,
   encodeResponseFrame,
@@ -243,8 +247,14 @@ function probe(res, cors, options) {
       ...(options.kernelPort() !== null
         ? { kernelTunnel: KERNEL_TUNNEL_VERSION, kernelPort: options.kernelPort() }
         : {}),
+      ...cdpProbe(options),
     })
   );
+}
+
+function cdpProbe(options) {
+  if (!options.browser()) return {};
+  return { cdp: CDP_PROTOCOL_VERSION };
 }
 
 export function handler(options) {
@@ -336,6 +346,27 @@ export function upgrader(options) {
       refuse(socket, 403, 'host not allowed');
       return;
     }
+    if (path === CDP_PATH) {
+      if (!options.browser()) {
+        refuse(socket, 404, 'not found');
+        return;
+      }
+      if (!isAllowedOrigin(req.headers.origin, options.origins)) {
+        refuse(socket, 403, 'origin not allowed');
+        return;
+      }
+      const key = offeredCdpKey(req.headers['sec-websocket-protocol']);
+      if (key === null) {
+        refuse(socket, 400, `subprotocol ${CDP_PROTOCOL} missing`);
+        return;
+      }
+      if (!validKey(key, options.key)) {
+        refuse(socket, 403, 'proxy key missing or wrong');
+        return;
+      }
+      options.cdp.accept(req, socket, head);
+      return;
+    }
     if (path !== KERNEL_TUNNEL_PATH || options.kernelPort() === null) {
       refuse(socket, 404, 'not found');
       return;
@@ -392,9 +423,24 @@ export async function startProxy(options = {}) {
     log,
   });
   const tunnels = createTunnels({ log, openTimeout: options.kernelOpenTimeout });
+  const browser = browserEndpoint(options.cdp);
+  const cdp = browser
+    ? createCdp({
+        browser,
+        fetch: options.fetch ?? globalThis.fetch,
+        log,
+        reconnectDelay: options.cdpReconnectDelay,
+      })
+    : null;
   let port = 0;
   let kernelPort = null;
-  const shared = { key, origins, port: () => port, kernelPort: () => kernelPort };
+  const shared = {
+    key,
+    origins,
+    port: () => port,
+    kernelPort: () => kernelPort,
+    browser: () => browser,
+  };
   const server = createServer(
     { maxHeaderSize: MAX_HEADER_BYTES },
     handler({
@@ -405,7 +451,7 @@ export async function startProxy(options = {}) {
       hostfs,
     })
   );
-  server.on('upgrade', upgrader({ ...shared, tunnels }));
+  server.on('upgrade', upgrader({ ...shared, tunnels, cdp }));
   try {
     await listen(server, options.port ?? 0, host);
   } catch (err) {
@@ -429,6 +475,7 @@ export async function startProxy(options = {}) {
         new Promise((resolve) => {
           hostfs.close();
           tunnels.close();
+          cdp?.close();
           server.close(() => resolve());
           server.closeAllConnections();
         }),
