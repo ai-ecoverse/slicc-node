@@ -158,10 +158,24 @@ function validMode(mode) {
   return Number.isInteger(mode) && mode >= 0 && mode <= 0o7777;
 }
 
-async function setattr(path, { mode, mtime }) {
+async function resize(path, stats, size) {
+  if (stats.isDirectory()) throw new HostfsError('EISDIR');
+  if (!stats.isFile()) throw new HostfsError('EINVAL', 'not a regular file');
+  const handle = await open(path, constants.O_WRONLY | OPEN_FLAGS);
+  try {
+    await handle.truncate(size);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function setattr(path, { mode, mtime, size }) {
   if (mode !== undefined && !validMode(mode)) throw new HostfsError('EINVAL');
   if (mtime !== undefined && !Number.isFinite(mtime)) throw new HostfsError('EINVAL');
+  if (size !== undefined && !(Number.isSafeInteger(size) && size >= 0))
+    throw new HostfsError('EINVAL');
   const stats = await look(path);
+  if (size !== undefined) await resize(path, stats, size);
   if (mode !== undefined) {
     if (stats.isSymbolicLink()) throw new HostfsError('EINVAL', 'cannot chmod a symlink');
     await chmod(path, mode);

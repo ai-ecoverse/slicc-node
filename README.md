@@ -141,13 +141,15 @@ POST /api/hostfs/grant            X-Bridge-Token: <key>
 { "mount": "project", "readonly": false }
 → 200 { "token": "<43 chars>", "mount": "project", "readonly": false,
         "capabilities": { "maxIo": 16777216, "symlinks": true, "chmod": true,
-                          "caseInsensitive": true, "normalization": "nfd-insensitive" } }
+                          "caseInsensitive": true, "normalization": "nfd-insensitive",
+                          "ranges": true } }
 ```
 
 - A token reaches only its folder, and only from the origin that was granted it. `readonly: true`, or an export marked `:ro`, makes every write `EROFS`.
 - A token lives in memory until `DELETE /api/hostfs/grant` with `{ "token" }`, until the process exits, or until 5 minutes pass with no request and no open watch stream. Its file handles die with it. A dead or unknown token is `403` with `X-Proxy-Error: 1`, and the kernel asks for a new one once.
 - Tokens are never accepted in a query string and never logged. They are kept by their SHA-256.
 - `caseInsensitive` is probed on the folder's volume; `normalization` is `nfd-insensitive` on macOS and `none` elsewhere.
+- `ranges: true` says `setattr` takes `size`, so the kernel reads and writes in pages. A proxy without it is used whole-file.
 - `POST /api/hostfs/mounts` answers `[{ "name", "readonly" }]`.
 
 **Paths** are relative to the folder, `/`-separated, with `""` for the root. `..`, a leading `/` and NUL are refused (`EACCES`, `EINVAL`). Every operation resolves the parent with `realpath` and refuses it outside the folder (`EACCES`), and treats the last component with lstat semantics: the kernel follows symlinks itself, so `open` on a symlink is `ELOOP`. Operations that change the namespace run one at a time, and others never run alongside them, so a page cannot swap a directory for a symlink between the check and the use.
@@ -164,7 +166,7 @@ POST /api/hostfs/grant            X-Bridge-Token: <key>
 | `rename` | `from`, `to` | `{}`, `rename(2)`; a directory onto a non-empty one is `ENOTEMPTY` |
 | `symlink` | `target`, `path` | `{}`; `target` is stored as given |
 | `readlink` | `path` | `{ "target" }` |
-| `setattr` | `path`, `mode?`, `mtime?` (ms) | `{}`; `mode` on a symlink is `EINVAL` |
+| `setattr` | `path`, `size?`, `mode?`, `mtime?` (ms) | `{}`; `size` truncates or extends with zeros, like `truncate(2)`, then `mode` and `mtime` apply; `size` on a directory is `EISDIR`, `size` or `mode` on a symlink is `EINVAL` |
 | `statfs` | | `{ "bsize", "blocks", "bfree", "bavail" }` |
 | `open` | `path`, `write?`, `create?`, `truncate?`, `exclusive?`, `mode?` | `{ "fh", "attr" }` |
 | `read` | `fh`, `offset`, `size` (≤ `maxIo`), `ifMatch?` | the bytes, with `ETag` and `Content-Range`; short at EOF, empty past it |
