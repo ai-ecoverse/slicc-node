@@ -6,16 +6,18 @@ SLICC's local proxy for Node. It gives the new SLICC on `*.sliccy.ai` full netwo
 npx @ai-ecoverse/slicc-node
 ```
 
-This starts the proxy on `127.0.0.1` with a fresh proxy key and opens `https://seven.sliccy.ai/#proxy=…&key=…`. The page passes both to `localProxyTransport({ url, key })` from [`@ai-ecoverse/slicc-kernel`](https://github.com/ai-ecoverse/slicc-kernel). The first time, Chrome asks whether the page may reach apps on this device (Local Network Access); allow it. The proxy lives as long as the process: stop it with `^C`, and the key dies with it.
+This starts the proxy on `127.0.0.1:17117` with its proxy key and opens `https://seven.sliccy.ai/#proxy=…&key=…`. The page passes both to `localProxyTransport({ url, key })` from [`@ai-ecoverse/slicc-kernel`](https://github.com/ai-ecoverse/slicc-kernel). The first time, Chrome asks whether the page may reach apps on this device (Local Network Access); allow it. Stop it with `^C`. The key and port stay the same when it starts again, after an update, a crash or a reboot, so an open SLICC page reconnects without a new launch URL (see [Restarts](#restarts)).
 
 | option | |
 | --- | --- |
 | `--page <url>` | page to open, default `https://seven.sliccy.ai/`; its origin is allowed too |
-| `--port <n>` | port on `127.0.0.1`, default any free port |
+| `--port <n>` | port on `127.0.0.1`, default `17117` (any free port with `--ephemeral`) |
 | `--origin <url>` | also allow this origin (repeatable), for a page served locally |
 | `--mount <path>[:<name>][:ro]` | share a folder with the page (repeatable), under `<name>` (default: its basename), read-only with `:ro`; see [Host folders](#host-folders) |
 | `--kernel-port <n>` | port on `127.0.0.1` for `http://<port>.kernel.localhost/`, default `80`; see [Kernel services](#kernel-services) |
 | `--no-kernel` | do not serve the page's kernel on `<port>.kernel.localhost` |
+| `--rotate-key` | replace the stored key, so pages and launch URLs holding the old one stop working |
+| `--ephemeral` | use a fresh key and any free port, and store nothing: the key dies with the process |
 | `--no-open` | print the URL without opening a browser |
 | `--quiet` | do not log proxied requests to stderr |
 
@@ -27,7 +29,7 @@ console.log(launchUrl('https://seven.sliccy.ai/', proxy));
 await proxy.close();
 ```
 
-`startProxy` also takes `key`, `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off) and `kernelOpenTimeout` (ms, default 10 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
+`startProxy` mints a fresh key unless given one; `persistentKey({ dir, rotate, warn })` returns the stored one, creating it if needed, and `configDir()` names the directory. `startProxy` also takes `key`, `portFallback` (listen on any free port when `port` is taken), `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off) and `kernelOpenTimeout` (ms, default 10 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
 
 ## Protocol
 
@@ -35,8 +37,17 @@ This is the contract a local proxy implements, so slicc-node and [slicc-swift](h
 
 ### Launch
 
-- The proxy listens on loopback only, and mints a fresh key per process: 32 random bytes, base64url (43 characters).
+- The proxy listens on loopback only. Its key is 32 random bytes, base64url (43 characters), kept across restarts as described in [Restarts](#restarts).
 - It opens the page with both in the **fragment**, which never reaches a server: `https://seven.sliccy.ai/#proxy=http%3A%2F%2F127.0.0.1%3A54321&key=<key>`, form-encoded (`URLSearchParams`). The page keeps them, strips them from the address bar and falls back to `fetchTransport()` once `probeLocalProxy` returns `null`.
+
+### Restarts
+
+The page stores `{ url, key }` from the launch fragment. A local proxy keeps both valid across restarts, so after an update, a crash or a reboot the page reconnects on its own: network through the same proxy, [host folders](#host-folders) by asking for new tokens, and the [kernel tunnel](#kernel-services) with the same key.
+
+- **Key file.** The key lives in `key` in the config directory: `$XDG_CONFIG_HOME/slicc-node` when that is set, else `~/Library/Application Support/slicc-node` on macOS, `%APPDATA%\slicc-node` on Windows and `~/.config/slicc-node` elsewhere. It is created on first run, mode `0600` in a `0700` directory, and published whole (written aside, then linked in), so two first starts at once agree on one key. A file or directory open to others is set back to `0600` or `0700` with a warning. A file without a key gets a new one, also with a warning. The key keeps websites out; any process running as the user could already read the user's files, so a `0600` file doesn't change who is trusted.
+- **Port.** The default is `17117`. If it is taken, for example by a second slicc-node, the proxy warns and takes any free port; pages from an earlier launch can't reconnect to that one. A port given with `--port` that is taken stops slicc-node.
+- **Host folders** are only as persistent as the command line: pass the same `--mount` options again, and the kernel's driver re-grants each folder by name when its old token answers `403`. Tokens never survive a restart.
+- `--rotate-key` writes a new key, so every page and launch URL with the old one is refused. `--ephemeral` keeps the old behaviour: a fresh key, any free port, nothing stored.
 
 ### Gate
 

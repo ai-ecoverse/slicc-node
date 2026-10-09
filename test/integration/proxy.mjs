@@ -4,10 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 const bin = fileURLToPath(new URL('../../bin/slicc-node.js', import.meta.url));
 
-export async function slicc(args = []) {
+export async function slicc(args = [], { config } = {}) {
   const kernel = args.some((arg) => arg.startsWith('--kernel')) ? [] : ['--no-kernel'];
-  const child = spawn(process.execPath, [bin, '--no-open', ...kernel, ...args], {
+  const identity = config ? [] : ['--ephemeral'];
+  const child = spawn(process.execPath, [bin, '--no-open', ...kernel, ...identity, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: config ? { ...process.env, XDG_CONFIG_HOME: config } : process.env,
   });
   let out = '';
   let err = '';
