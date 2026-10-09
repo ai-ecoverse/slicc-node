@@ -265,8 +265,20 @@ async function discoverBrowserSocket(browser, fetchImpl) {
   const res = await fetchImpl(new URL('/json/version', browser));
   if (!res.ok) throw new Error(`json/version answered ${res.status}`);
   const body = await res.json();
-  const url = body?.webSocketDebuggerUrl;
-  if (typeof url !== 'string' || (!url.startsWith('ws://') && !url.startsWith('wss://'))) {
+  return debuggerSocketURL(body?.webSocketDebuggerUrl);
+}
+
+export function debuggerSocketURL(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    throw new Error('no browser webSocketDebuggerUrl from CDP');
+  }
+  const lower = url.toLowerCase();
+  if (lower.startsWith('wss://')) {
+    throw new Error(
+      `webSocketDebuggerUrl ${url} is not supported; only ws:// debugging URLs are supported`
+    );
+  }
+  if (!lower.startsWith('ws://')) {
     throw new Error('no browser webSocketDebuggerUrl from CDP');
   }
   return url;
