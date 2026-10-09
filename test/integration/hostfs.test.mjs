@@ -30,6 +30,7 @@ before(async () => {
   proxy = await startProxy({
     mounts: [folder, `${join(base, 'docs')}:docs:ro`, join(base, 'missing')],
     hostfsIdle: 400,
+    kernelPort: null,
   });
 });
 

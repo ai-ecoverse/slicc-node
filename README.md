@@ -14,6 +14,8 @@ This starts the proxy on `127.0.0.1` with a fresh proxy key and opens `https://s
 | `--port <n>` | port on `127.0.0.1`, default any free port |
 | `--origin <url>` | also allow this origin (repeatable), for a page served locally |
 | `--mount <path>[:<name>][:ro]` | share a folder with the page (repeatable), under `<name>` (default: its basename), read-only with `:ro`; see [Host folders](#host-folders) |
+| `--kernel-port <n>` | port on `127.0.0.1` for `http://<port>.kernel.localhost/`, default `80`; see [Kernel services](#kernel-services) |
+| `--no-kernel` | do not serve the page's kernel on `<port>.kernel.localhost` |
 | `--no-open` | print the URL without opening a browser |
 | `--quiet` | do not log proxied requests to stderr |
 
@@ -25,7 +27,7 @@ console.log(launchUrl('https://seven.sliccy.ai/', proxy));
 await proxy.close();
 ```
 
-`startProxy` also takes `key`, `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn` and `hostfsIdle`, and resolves with `{ url, key, server, close() }`.
+`startProxy` also takes `key`, `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off) and `kernelOpenTimeout` (ms, default 10 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
 
 ## Protocol
 
@@ -41,7 +43,7 @@ This is the contract a local proxy implements, so slicc-node and [slicc-swift](h
 Every request to the proxy passes these checks in order. Each refusal is a JSON `{ "error": "<reason>" }` with `X-Proxy-Error: 1`.
 
 1. **Host:** `Host` must be `127.0.0.1`, `localhost` or `[::1]` with the proxy's port; otherwise `403 host not allowed`. This blocks DNS rebinding.
-2. **Path:** `/api/fetch-proxy` (`POST`), `/api/oauth-state` (`POST`, `DELETE`), `/api/oauth-result` (`GET`) and the [host folder](#host-folders) paths, each refusing other methods with `405`; `/auth/callback` skips the rest of the gate (see [Sign-in callback](#sign-in-callback)); anything else is `404 not found`.
+2. **Path:** `/api/fetch-proxy` (`POST`), `/api/oauth-state` (`POST`, `DELETE`), `/api/oauth-result` (`GET`) and the [host folder](#host-folders) paths, each refusing other methods with `405`; `/api/kernel-tunnel` takes only a WebSocket upgrade (see [Kernel services](#kernel-services)), and so does no other path; `/auth/callback` skips the rest of the gate (see [Sign-in callback](#sign-in-callback)); anything else is `404 not found`.
 3. **Origin:** `Origin` must be `https://<label>.sliccy.ai`, where `<label>` is one DNS label other than `www`. That covers `seven` and the branch hosts slicc-bios deploys. Origins added with `--origin` (normalized, exact match) are also allowed. A missing or other origin is `403 origin not allowed`, sent **without** CORS headers.
 4. **Preflight:** an `OPTIONS` from an allowed origin is answered `204` with:
    - `Access-Control-Allow-Origin: <origin>`, `Vary: Origin`
@@ -63,7 +65,7 @@ From step 5 on, every answer carries `Access-Control-Allow-Origin`, `Access-Cont
 { "rawFetch": 1, "requestBodyStreaming": false, "maxRequestBodyBytes": 268435456 }
 ```
 
-With at least one folder exported, it adds `"hostfs": 1`.
+With at least one folder exported, it adds `"hostfs": 1`. With the [kernel listener](#kernel-services) up, it adds `"kernelTunnel": 1, "kernelPort": <port>`.
 
 ### Request
 
@@ -198,6 +200,55 @@ The body streams to disk with bounded memory, in any order and with holes. `rele
 | anything else (`EIO`, `EMFILE`, …) | 500 |
 
 **Local Network Access.** The page's permission covers its dedicated worker. In Chromium 153, a public page without it reaches loopback neither from the page nor from a worker; once the user allows it, the worker's hostfs calls, the `PUT` and the watch stream all go through (`test/integration/lna.test.mjs`).
+
+### Kernel services
+
+The page's kernel runs servers too: vite, `python -m http.server`, impeccable live. From the page, `localhost` stays the real machine and a kernel port `N` is `http://N.kernel.localhost/`. seven's service worker routes its own pages' subresources there through `kernel.loopbackFetch`, but it cannot carry top-level navigations or WebSockets (vite HMR). `*.kernel.localhost` resolves to loopback, so a local listener carries them through a tunnel into the page, which calls `kernel.dial({ port: N })` ([slicc-kernel#103](https://github.com/ai-ecoverse/slicc-kernel/issues/103)). Each kernel port is its own origin, isolated from seven's.
+
+**Listener.**
+- It listens on `127.0.0.1:80` by default (unprivileged on macOS); `--kernel-port` picks another, and then URLs carry it: `http://8400.kernel.localhost:8080/`.
+- If the port cannot be bound, for example because something on the machine already uses `:80` or Linux refuses an unprivileged bind, slicc-node prints `kernel services are off: … try --kernel-port` and runs on without it. The probe then leaves out `kernelTunnel`. seven still reaches kernel servers for subresources through its service worker, but navigations and WebSockets to `*.kernel.localhost` find nothing, so pass `--kernel-port 8080` (or any free port).
+- It reads the first request head (64 KiB at most, within 30 s) and takes exactly one `Host` of the form `<1–65535>.kernel.localhost`. The host may carry no port or the listener's own port; no leading zeros and no trailing dot. It then opens a stream to that kernel port, sends what it has read and pipes bytes both ways without parsing anything else. Keep-alive, chunked bodies and WebSocket upgrades pass through as they are.
+- A connection belongs to the host of its first request. Browsers pool HTTP/1.1 connections per host and port, so no other origin writes into it.
+
+**Errors** are plain text with `X-Proxy-Error: 1` and `Connection: close`:
+
+| case | answer |
+| --- | --- |
+| `Host` not `<port>.kernel.localhost` | `421` |
+| malformed request line, or not exactly one `Host` | `400` |
+| head over 64 KiB | `431` |
+| no page connected | `502 no seven page connected` |
+| the page answers `RESET` with `ECONNREFUSED` | `502 nothing listening on kernel port N` |
+| the page answers `RESET` with another reason | `502 kernel port N: <reason>` |
+| no `OPENED` within 10 s | `504 kernel port N did not answer` |
+
+The browser's connection waits for `OPENED` unread, so a browser that gives up meanwhile is noticed when the dial completes or times out.
+
+**Tunnel.** The page opens a WebSocket to `ws://127.0.0.1:<proxy port>/api/kernel-tunnel` with the subprotocols `slicc.kernel-tunnel.v1` and `slicc.key.<key>`, since a browser cannot set headers on a WebSocket. Before upgrading, the proxy checks the loopback `Host` (`403 host not allowed`), the path and that the listener is up (`404`), the `Origin` as in [Gate](#gate) (`403 origin not allowed`), that `slicc.kernel-tunnel.v1` is offered (`400`) and the key in constant time (`403 proxy key missing or wrong`). It selects `slicc.kernel-tunnel.v1`, so the key is never echoed.
+
+Every message is binary (a text message closes the tunnel with `1003`): a `u8` type, a big-endian `u32` stream id, then the payload. slicc-node opens every stream and numbers them from 1, never reusing an id.
+
+| type | direction | payload |
+| --- | --- | --- |
+| `1` OPEN | slicc-node → page | `u16` BE kernel port |
+| `2` OPENED | page → slicc-node | empty: the dial succeeded |
+| `3` DATA | both | 1 to 65 536 bytes |
+| `4` END | both | empty: the sender half-closes (`SHUT_WR`) |
+| `5` RESET | both | UTF-8 reason, such as `ECONNREFUSED`; aborts both directions |
+| `6` CREDIT | both | `u32` BE count of bytes consumed, at least 1 |
+
+- **Flow control:** each side may have at most 256 KiB of DATA per stream and direction that the other has not credited. The receiver credits bytes once it has handed them on: slicc-node when the browser's socket takes them, the page when `writer.write()` resolves. A sender out of window stops reading its source. Without this, one slow tab would stall every stream behind it.
+- **Lifecycle:** the page answers OPEN with OPENED or RESET, and DATA flows only after OPENED. A stream ends after END both ways or a RESET from either side. Frames for an unknown id are ignored, since they may cross a RESET.
+- **Violations:** DATA or END before OPENED, DATA or END after the page's END, empty DATA, DATA past the window or CREDIT past it reset the stream with `EPROTO`. An unknown type, a short or malformed frame or OPEN from the page closes the tunnel with `1002`, and a message over 65 541 bytes with `1009`. Closing the tunnel resets its streams.
+- **Liveness:** slicc-node pings every 15 s and drops a tunnel that misses a pong.
+- **The page** calls `kernel.dial({ port })` for each OPEN and sends OPENED, or RESET with the error code. It sends `readable` as DATA and END when it is done, writes DATA to `writable`, closes `writable` on END and calls `close()` on RESET.
+
+**Several tabs.** The most recently connected tunnel takes new streams. When it closes, the one before it that is still open takes over. Open streams stay where they are.
+
+**Security.**
+- The `Host` allowlist on the listener defends against DNS rebinding. Only a page holding the key, on an allowed origin, can register a tunnel.
+- Kernel services are exposed like any dev server on localhost: any local process can reach them on the kernel port, and so can any web page Chrome lets reach loopback (a public page goes through Local Network Access first). Nothing listens beyond `127.0.0.1`. Run with `--no-kernel` to keep them inside the page.
 
 ## The rest of node-server
 
