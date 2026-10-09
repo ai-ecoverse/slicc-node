@@ -21,6 +21,14 @@ export const HOSTFS_TOKEN_HEADER = 'X-Hostfs-Token';
 export const HOSTFS_REQUEST_HEADER = 'X-Hostfs-Request';
 export const HOSTFS_ERRNO_HEADER = 'X-Hostfs-Errno';
 export const HOSTFS_PROTOCOL_VERSION = 1;
+export const KERNEL_TUNNEL_PATH = '/api/kernel-tunnel';
+export const KERNEL_TUNNEL_PROTOCOL = 'slicc.kernel-tunnel.v1';
+export const KERNEL_KEY_PROTOCOL = 'slicc.key.';
+export const KERNEL_TUNNEL_VERSION = 1;
+export const KERNEL_PORT = 80;
+export const TUNNEL_WINDOW = 256 * 1024;
+export const TUNNEL_CHUNK = 64 * 1024;
+export const FRAME = { OPEN: 1, OPENED: 2, DATA: 3, END: 4, RESET: 5, CREDIT: 6 };
 
 const DECODED_CODINGS = new Set(['gzip', 'x-gzip', 'deflate', 'br']);
 const HOP_BY_HOP = [
@@ -138,4 +146,17 @@ export function encodeResponseFrame(head) {
   frame.writeUInt32BE(json.byteLength, 0);
   json.copy(frame, 4);
   return frame;
+}
+
+export function encodeTunnelFrame(type, id, payload = Buffer.alloc(0)) {
+  const frame = Buffer.alloc(5 + payload.byteLength);
+  frame.writeUInt8(type, 0);
+  frame.writeUInt32BE(id, 1);
+  Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength).copy(frame, 5);
+  return frame;
+}
+
+export function decodeTunnelFrame(frame) {
+  if (frame.byteLength < 5) return null;
+  return { type: frame.readUInt8(0), id: frame.readUInt32BE(1), payload: frame.subarray(5) };
 }

@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 const bin = fileURLToPath(new URL('../../bin/slicc-node.js', import.meta.url));
 
 export async function slicc(args = []) {
-  const child = spawn(process.execPath, [bin, '--no-open', ...args], {
+  const kernel = args.some((arg) => arg.startsWith('--kernel')) ? [] : ['--no-kernel'];
+  const child = spawn(process.execPath, [bin, '--no-open', ...kernel, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';

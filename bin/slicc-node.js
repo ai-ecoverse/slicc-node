@@ -11,6 +11,8 @@ Starts a local proxy with a fresh proxy key and opens SLICC with both in the URL
   --origin <url>    also allow this origin, repeatable
   --mount <path>[:<name>][:ro]
                     share a folder with the page, repeatable
+  --kernel-port <n> port for http://<port>.kernel.localhost/ (default 80)
+  --no-kernel       do not serve the page's kernel on <port>.kernel.localhost
   --no-open         print the URL without opening a browser
   --quiet           do not log proxied requests
   -h, --help        show this help
@@ -22,6 +24,8 @@ const { values } = parseArgs({
     port: { type: 'string', default: '0' },
     origin: { type: 'string', multiple: true, default: [] },
     mount: { type: 'string', multiple: true, default: [] },
+    'kernel-port': { type: 'string', default: '80' },
+    kernel: { type: 'boolean', default: true },
     open: { type: 'boolean', default: true },
     quiet: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -38,11 +42,16 @@ const proxy = await startProxy({
   port: Number(values.port),
   origins: [...values.origin, new URL(values.page).origin],
   mounts: values.mount,
+  kernelPort: values.kernel ? Number(values['kernel-port']) : null,
   log: values.quiet ? undefined : (line) => process.stderr.write(`${line}\n`),
   warn: (line) => process.stderr.write(`${line}\n`),
 });
 const url = launchUrl(values.page, proxy);
 process.stdout.write(`slicc-node proxy on ${proxy.url}\n${url}\n`);
+if (proxy.kernelPort !== null) {
+  const suffix = proxy.kernelPort === 80 ? '' : `:${proxy.kernelPort}`;
+  process.stderr.write(`kernel services on http://<port>.kernel.localhost${suffix}/\n`);
+}
 if (values.open && !(await openBrowser(url)))
   process.stderr.write('could not open a browser; open the URL above\n');
 

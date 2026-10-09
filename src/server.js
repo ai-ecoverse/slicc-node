@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import { createServer, STATUS_CODES } from 'node:http';
 import { Readable } from 'node:stream';
 import {
   createHostfs,
@@ -7,14 +7,20 @@ import {
   loadFolders,
 } from './hostfs-routes.js';
 import { fail, readBody, TooLarge } from './http.js';
+import { listenKernel } from './kernel.js';
 import { callbackPage, createOAuthStates, refusedPage, validNonce } from './oauth.js';
 import {
   decodeRequestHead,
+  ERROR_HEADER,
   encodeResponseFrame,
   FETCH_PROXY_PATH,
   HOSTFS_PROTOCOL_VERSION,
   hasBody,
   isDecodedPartial,
+  KERNEL_PORT,
+  KERNEL_TUNNEL_PATH,
+  KERNEL_TUNNEL_PROTOCOL,
+  KERNEL_TUNNEL_VERSION,
   KEY_HEADER,
   MAX_HEADER_BYTES,
   MAX_REQUEST_BODY,
@@ -38,6 +44,7 @@ import {
   preflightHeaders,
   validKey,
 } from './security.js';
+import { createTunnels, offeredKey } from './tunnel.js';
 
 const RAW_REQUEST = RAW_REQUEST_HEADER.toLowerCase();
 const RAW_PROBE = RAW_PROBE_HEADER.toLowerCase();
@@ -233,6 +240,9 @@ function probe(res, cors, options) {
       requestBodyStreaming: false,
       maxRequestBodyBytes: options.maxRequestBody,
       ...(options.hostfs.mounts().length > 0 ? { hostfs: HOSTFS_PROTOCOL_VERSION } : {}),
+      ...(options.kernelPort() !== null
+        ? { kernelTunnel: KERNEL_TUNNEL_VERSION, kernelPort: options.kernelPort() }
+        : {}),
     })
   );
 }
@@ -303,6 +313,64 @@ export function handler(options) {
   };
 }
 
+function refuse(socket, status, error) {
+  const body = JSON.stringify({ error });
+  socket.end(
+    [
+      `HTTP/1.1 ${status} ${STATUS_CODES[status]}`,
+      'Content-Type: application/json',
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      `${ERROR_HEADER}: 1`,
+      'Connection: close',
+      '',
+      body,
+    ].join('\r\n')
+  );
+}
+
+export function upgrader(options) {
+  return (req, socket, head) => {
+    socket.on('error', () => socket.destroy());
+    const path = new URL(req.url, 'http://localhost').pathname;
+    if (!isLoopbackHost(req.headers.host, options.port())) {
+      refuse(socket, 403, 'host not allowed');
+      return;
+    }
+    if (path !== KERNEL_TUNNEL_PATH || options.kernelPort() === null) {
+      refuse(socket, 404, 'not found');
+      return;
+    }
+    if (!isAllowedOrigin(req.headers.origin, options.origins)) {
+      refuse(socket, 403, 'origin not allowed');
+      return;
+    }
+    const key = offeredKey(req.headers['sec-websocket-protocol']);
+    if (key === null) {
+      refuse(socket, 400, `subprotocol ${KERNEL_TUNNEL_PROTOCOL} missing`);
+      return;
+    }
+    if (!validKey(key, options.key)) {
+      refuse(socket, 403, 'proxy key missing or wrong');
+      return;
+    }
+    options.tunnels.accept(req, socket, head);
+  };
+}
+
+async function openKernel(options, tunnels, log) {
+  const host = '127.0.0.1';
+  const port = options.kernelPort === undefined ? KERNEL_PORT : options.kernelPort;
+  if (port === null) return null;
+  try {
+    return await listenKernel({ port, host, tunnels, log });
+  } catch (err) {
+    (options.warn ?? log)(
+      `kernel services are off: cannot listen on ${host}:${port} (${err.code}); try --kernel-port`
+    );
+    return null;
+  }
+}
+
 export async function startProxy(options = {}) {
   const host = options.host ?? '127.0.0.1';
   const key = options.key ?? mintKey();
@@ -313,34 +381,43 @@ export async function startProxy(options = {}) {
     idle: options.hostfsIdle,
     log,
   });
+  const tunnels = createTunnels({ log, openTimeout: options.kernelOpenTimeout });
   let port = 0;
+  let kernelPort = null;
+  const shared = { key, origins, port: () => port, kernelPort: () => kernelPort };
   const server = createServer(
     { maxHeaderSize: MAX_HEADER_BYTES },
     handler({
-      key,
-      origins,
-      port: () => port,
+      ...shared,
       fetch: options.fetch ?? globalThis.fetch,
       maxRequestBody: options.maxRequestBody ?? MAX_REQUEST_BODY,
       log,
       hostfs,
     })
   );
+  server.on('upgrade', upgrader({ ...shared, tunnels }));
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(options.port ?? 0, host, resolve);
   });
   port = server.address().port;
+  const kernel = await openKernel(options, tunnels, log);
+  kernelPort = kernel ? kernel.port : null;
   const name = host.includes(':') ? `[${host}]` : host;
   return {
     url: `http://${name}:${port}`,
     key,
     server,
+    kernelPort,
     close: () =>
-      new Promise((resolve) => {
-        hostfs.close();
-        server.close(() => resolve());
-        server.closeAllConnections();
-      }),
+      Promise.all([
+        new Promise((resolve) => {
+          hostfs.close();
+          tunnels.close();
+          server.close(() => resolve());
+          server.closeAllConnections();
+        }),
+        kernel?.close(),
+      ]).then(() => {}),
   };
 }
