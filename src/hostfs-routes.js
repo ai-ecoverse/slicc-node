@@ -100,6 +100,7 @@ export async function loadFolders(specs, warn = () => {}) {
         chmod: process.platform !== 'win32',
         caseInsensitive: await probeCase(root),
         normalization: NORMALIZATION,
+        ranges: true,
       },
     });
   }

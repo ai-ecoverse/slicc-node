@@ -122,6 +122,7 @@ test('a grant needs the key and an allowed origin, and names an exported folder'
   assert.equal(granted.readonly, false);
   assert.equal(granted.capabilities.maxIo, 16 * 1024 * 1024);
   assert.equal(typeof granted.capabilities.caseInsensitive, 'boolean');
+  assert.equal(granted.capabilities.ranges, true);
   const noKey = await keyed('/api/hostfs/grant', { mount: 'project' }, { 'X-Bridge-Token': 'x' });
   assert.equal(noKey.status, 403);
   assert.equal(noKey.headers['x-proxy-error'], '1');
@@ -195,6 +196,7 @@ test('paths cannot leave the folder by .., absolute paths or symlinks', async ()
   await ok(token, { op: 'symlink', target: '/', path: 'root-link' });
   await errno(token, { op: 'list', path: 'root-link/etc' }, 'EACCES');
   await errno(token, { op: 'setattr', path: 'key-link', mode: 0o777 }, 'EINVAL');
+  await errno(token, { op: 'setattr', path: 'key-link', size: 0 }, 'EINVAL');
   assert.deepEqual(await ok(token, { op: 'readlink', path: 'inner-link' }), {
     target: 'hello.txt',
   });
@@ -213,6 +215,7 @@ test('a read-only token cannot write, rename or remove', async () => {
     { op: 'rename', from: 'hello.txt', to: 'bye.txt' },
     { op: 'symlink', target: 'hello.txt', path: 'l' },
     { op: 'setattr', path: 'hello.txt', mode: 0o600 },
+    { op: 'setattr', path: 'hello.txt', size: 0 },
     { op: 'open', path: 'hello.txt', write: true },
     { op: 'open', path: 'new.txt', create: true },
     { op: 'open', path: 'hello.txt', truncate: true },
@@ -225,6 +228,36 @@ test('a read-only token cannot write, rename or remove', async () => {
   assert.equal(await readFile(join(folder, 'hello.txt'), 'utf8'), 'hello');
   const docs = await grant('docs', false);
   await errno(docs.token, { op: 'mkdir', path: 'x' }, 'EROFS');
+  await errno(docs.token, { op: 'setattr', path: 'x', size: 0 }, 'EROFS');
+});
+
+test('setattr with size truncates and extends with zeros, like truncate(2)', async () => {
+  const { token } = await grant('project');
+  await writeFile(join(folder, 'sized.txt'), 'hello, world');
+  await ok(token, { op: 'setattr', path: 'sized.txt', size: 5 });
+  assert.equal(await readFile(join(folder, 'sized.txt'), 'utf8'), 'hello');
+  await ok(token, { op: 'setattr', path: 'sized.txt', size: 9 });
+  assert.deepEqual(
+    await readFile(join(folder, 'sized.txt')),
+    Buffer.concat([Buffer.from('hello'), Buffer.alloc(4)])
+  );
+  assert.equal((await ok(token, { op: 'stat', path: 'sized.txt' })).size, 9);
+  await ok(token, { op: 'setattr', path: 'sized.txt', size: 0, mtime: 1_000_000_000_000 });
+  const attr = await ok(token, { op: 'stat', path: 'sized.txt' });
+  assert.equal(attr.size, 0);
+  assert.equal(attr.mtime, 1_000_000_000_000);
+  const { fh } = await ok(token, { op: 'open', path: 'sized.txt', write: true });
+  await ok(token, { op: 'setattr', path: 'sized.txt', size: 3 });
+  assert.equal((await put(token, fh, 3, 'abc')).status, 200);
+  assert.deepEqual((await ok(token, { op: 'release', fh })).attr.size, 6);
+  assert.deepEqual(await readFile(join(folder, 'sized.txt')), Buffer.from('\0\0\0abc'));
+  await ok(token, { op: 'mkdir', path: 'sized-dir' });
+  await errno(token, { op: 'setattr', path: 'sized-dir', size: 0 }, 'EISDIR', 409);
+  await errno(token, { op: 'setattr', path: '', size: 0 }, 'EISDIR', 409);
+  await errno(token, { op: 'setattr', path: 'gone.txt', size: 0 }, 'ENOENT', 404);
+  for (const size of [-1, 1.5, '3', Number.MAX_SAFE_INTEGER + 1])
+    await errno(token, { op: 'setattr', path: 'sized.txt', size }, 'EINVAL', 400);
+  assert.equal((await ok(token, { op: 'stat', path: 'sized.txt' })).size, 6);
 });
 
 test('metadata operations answer with POSIX errnos', async () => {
