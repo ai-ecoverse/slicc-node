@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    uses: ai-ecoverse/slicc-shared-web/.github/workflows/node-release.yml@v1.23.1
+    uses: ai-ecoverse/slicc-shared-web/.github/workflows/node-release.yml@v1.23.2
     with:
       chromium: false
     secrets: inherit
