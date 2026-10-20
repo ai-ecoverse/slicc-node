@@ -1,28 +1,18 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises';
+import { access, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { DEFAULT_PROXY_PORT } from '../../src/index.js';
+import { DEFAULT_PROXY_PORT, persistentKey } from '../../src/index.js';
 import { hop, rawHead, slicc, unframe } from './proxy.mjs';
 
 const seven = 'https://seven.sliccy.ai';
+const oldKey = 'fake-value-0001-fake-value-0001-fake-value-';
 let base;
 let config;
-let folder;
 let upstream;
 let target;
 
@@ -34,12 +24,15 @@ const freePort = async () => {
   return port;
 };
 
+const missing = (path) =>
+  access(path).then(
+    () => false,
+    (err) => err.code === 'ENOENT'
+  );
+
 before(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), 'slicc-restart-')));
   config = join(base, 'config');
-  folder = join(base, 'project');
-  await mkdir(folder);
-  await writeFile(join(folder, 'hello.txt'), 'hello');
   upstream = createServer((_req, res) => res.end('upstream'));
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
@@ -51,13 +44,6 @@ after(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-const keyed = (proxy, key, path, body) =>
-  hop(proxy, {
-    path,
-    headers: { Origin: seven, 'X-Bridge-Token': key },
-    body: JSON.stringify(body),
-  });
-
 const fetched = async (proxy, key) => {
   const res = await hop(proxy, {
     headers: { Origin: seven, 'X-Bridge-Token': key, 'X-Slicc-Raw-Request': rawHead(target) },
@@ -65,82 +51,54 @@ const fetched = async (proxy, key) => {
   return res.status === 200 ? unframe(res.body).body.toString() : res.status;
 };
 
-const stat_ = (proxy, token) =>
-  hop(proxy, {
-    path: '/api/hostfs',
-    headers: { Origin: seven, 'X-Hostfs-Token': token },
-    body: JSON.stringify({ op: 'stat', path: 'hello.txt' }),
-  });
-
-test('a restarted proxy keeps its key and port, so the page reconnects', async () => {
+test('every launch mints a fresh key, and a relaunch refuses the old one', async () => {
   const port = String(await freePort());
-  const args = ['--port', port, '--mount', `${folder}:project`];
-  const first = await slicc(args, { config });
-  const page = { url: first.url, key: first.key };
-  assert.equal(await fetched(first, page.key), 'upstream');
-  const { token } = JSON.parse(
-    (await keyed(first, page.key, '/api/hostfs/grant', { mount: 'project' })).body
-  );
-  assert.equal((await stat_(first, token)).status, 200);
+  const first = await slicc(['--port', port], { config });
+  assert.match(first.key, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(await fetched(first, first.key), 'upstream');
+  assert.ok(await missing(join(config, 'slicc-node', 'key')));
   await first.stop();
 
-  const second = await slicc(args, { config });
+  const second = await slicc(['--port', port], { config });
   try {
-    assert.equal(second.url, page.url);
-    assert.equal(second.key, page.key);
-    assert.equal(await fetched(page, page.key), 'upstream');
-    assert.equal((await stat_(page, token)).status, 403);
-    const regrant = await keyed(page, page.key, '/api/hostfs/grant', { mount: 'project' });
-    assert.equal(regrant.status, 200);
-    assert.equal((await stat_(page, JSON.parse(regrant.body).token)).status, 200);
+    assert.equal(second.url, first.url);
+    assert.notEqual(second.key, first.key);
+    assert.equal(await fetched(first, first.key), 403);
+    assert.equal(await fetched(second, second.key), 'upstream');
+    assert.ok(await missing(join(config, 'slicc-node', 'key')));
   } finally {
     await second.stop();
   }
-  const file = join(config, 'slicc-node', 'key');
-  assert.equal((await readFile(file, 'utf8')).trim(), page.key);
-  if (process.platform !== 'win32') {
-    assert.equal((await stat(file)).mode & 0o777, 0o600);
-    assert.equal((await stat(join(config, 'slicc-node'))).mode & 0o777, 0o700);
+  assert.ok(await missing(join(config, 'slicc-node', 'key')));
+});
+
+test('a key file left by an earlier version is deleted at startup and never used', async () => {
+  const dir = join(base, 'legacy');
+  const file = join(dir, 'slicc-node', 'key');
+  await mkdir(join(dir, 'slicc-node'), { recursive: true });
+  await writeFile(file, `${oldKey}\n`, { mode: 0o600 });
+  await writeFile(`${file}.0123456789ab.tmp`, `${oldKey}\n`, { mode: 0o600 });
+  const proxy = await slicc(['--port', String(await freePort())], { config: dir });
+  try {
+    assert.ok(await missing(file));
+    assert.ok(await missing(join(dir, 'slicc-node')));
+    assert.notEqual(proxy.key, oldKey);
+    assert.equal(await fetched(proxy, oldKey), 403);
+  } finally {
+    await proxy.stop();
   }
 });
 
-test('--rotate-key replaces the key, --ephemeral leaves it alone', async () => {
+test('--rotate-key and --ephemeral are accepted and change nothing', async () => {
   const port = String(await freePort());
-  const kept = await slicc(['--port', port], { config });
-  await kept.stop();
-  const rotated = await slicc(['--port', port, '--rotate-key'], { config });
-  await rotated.stop();
-  assert.notEqual(rotated.key, kept.key);
-  assert.equal(await fetched(kept, kept.key).catch(() => 'gone'), 'gone');
-  const file = join(config, 'slicc-node', 'key');
-  assert.equal((await readFile(file, 'utf8')).trim(), rotated.key);
-  const ephemeral = await slicc(['--ephemeral'], { config });
-  await ephemeral.stop();
-  assert.notEqual(ephemeral.key, rotated.key);
-  assert.notEqual(new URL(ephemeral.url).port, String(DEFAULT_PROXY_PORT));
-  assert.equal((await readFile(file, 'utf8')).trim(), rotated.key);
-});
-
-test('a broken or loose key file is repaired', async () => {
-  const dir = join(base, 'broken');
-  const file = join(dir, 'slicc-node', 'key');
-  await mkdir(join(dir, 'slicc-node'), { recursive: true });
-  await writeFile(file, 'not a key\n');
-  const port = String(await freePort());
-  const fresh = await slicc(['--port', port], { config: dir });
-  await fresh.stop();
-  assert.match(fresh.stderr(), /does not hold a proxy key; minting a new one/);
-  assert.equal((await readFile(file, 'utf8')).trim(), fresh.key);
-  if (process.platform === 'win32') return;
-  await chmod(file, 0o644);
-  await chmod(join(dir, 'slicc-node'), 0o777);
-  const tightened = await slicc(['--port', port], { config: dir });
-  await tightened.stop();
-  assert.equal(tightened.key, fresh.key);
-  assert.match(tightened.stderr(), /was readable by others; it is 0600 now/);
-  assert.match(tightened.stderr(), /was open to others; it is 0700 now/);
-  assert.equal((await stat(file)).mode & 0o777, 0o600);
-  assert.equal((await stat(join(dir, 'slicc-node'))).mode & 0o777, 0o700);
+  const proxy = await slicc(['--port', port, '--rotate-key', '--ephemeral'], { config });
+  try {
+    assert.equal(new URL(proxy.url).port, port);
+    assert.equal(await fetched(proxy, proxy.key), 'upstream');
+    assert.ok(await missing(join(config, 'slicc-node', 'key')));
+  } finally {
+    await proxy.stop();
+  }
 });
 
 test('the default port is fixed, with a free port as fallback when it is taken', async () => {
@@ -169,20 +127,19 @@ test('an explicit port that is taken stops slicc-node', async () => {
       slicc(['--port', String(blocker.address().port)], { config }),
       /exited with 1[\s\S]*EADDRINUSE/
     );
-    await assert.rejects(slicc(['--ephemeral', '--rotate-key'], { config }), /exited with 2/);
   } finally {
     blocker.close();
   }
 });
 
-test('two first starts at once agree on one stored key', async () => {
-  const dir = join(base, 'race');
-  const [one, two] = await Promise.all([
-    slicc(['--port', String(await freePort())], { config: dir }),
-    slicc(['--port', String(await freePort())], { config: dir }),
-  ]);
-  await Promise.all([one.stop(), two.stop()]);
-  assert.equal(one.key, two.key);
-  assert.equal((await readFile(join(dir, 'slicc-node', 'key'), 'utf8')).trim(), one.key);
-  assert.deepEqual(await readdir(join(dir, 'slicc-node')), ['key']);
+test('the deprecated persistentKey deletes an old key file and returns a fresh key', async () => {
+  const dir = join(base, 'library', 'slicc-node');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'key'), `${oldKey}\n`, { mode: 0o600 });
+  const one = await persistentKey({ dir });
+  const two = await persistentKey({ dir });
+  assert.match(one, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(one, oldKey);
+  assert.notEqual(one, two);
+  assert.ok(await missing(join(dir, 'key')));
 });

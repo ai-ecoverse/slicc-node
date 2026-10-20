@@ -1,15 +1,26 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const bin = fileURLToPath(new URL('../../bin/slicc-node.js', import.meta.url));
 
+let scratch;
+const isolated = () => {
+  if (scratch) return scratch;
+  scratch = mkdtempSync(join(tmpdir(), 'slicc-config-'));
+  process.once('exit', () => rmSync(scratch, { recursive: true, force: true }));
+  return scratch;
+};
+
 export async function slicc(args = [], { config } = {}) {
   const kernel = args.some((arg) => arg.startsWith('--kernel')) ? [] : ['--no-kernel'];
-  const identity = config ? [] : ['--ephemeral'];
-  const child = spawn(process.execPath, [bin, '--no-open', ...kernel, ...identity, ...args], {
+  const port = config || args.includes('--port') ? [] : ['--port', '0'];
+  const child = spawn(process.execPath, [bin, '--no-open', ...kernel, ...port, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: config ? { ...process.env, XDG_CONFIG_HOME: config } : process.env,
+    env: { ...process.env, XDG_CONFIG_HOME: config ?? isolated() },
   });
   let out = '';
   let err = '';
