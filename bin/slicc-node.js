@@ -4,27 +4,27 @@ import {
   configDir,
   DEFAULT_PAGE,
   DEFAULT_PROXY_PORT,
+  forgetStoredKey,
   launchUrl,
   openBrowser,
-  persistentKey,
   startProxy,
 } from '../src/index.js';
 
 const usage = `Usage: slicc-node [options]
 
-Starts a local proxy and opens SLICC with its URL and key in the URL fragment. The key and
-port stay the same across restarts, so an open SLICC page reconnects.
+Starts a local proxy and opens SLICC with its URL and key in the URL fragment. Every launch
+mints a fresh key, held in memory only, so the key lives only as long as the launcher.
 
   --page <url>      page to open (default ${DEFAULT_PAGE})
-  --port <n>        port on 127.0.0.1 (default ${DEFAULT_PROXY_PORT}, or any free port with --ephemeral)
+  --port <n>        port on 127.0.0.1 (default ${DEFAULT_PROXY_PORT}, or any free port if it is taken)
   --origin <url>    also allow this origin, repeatable
   --mount <path>[:<name>][:ro]
                     share a folder with the page, repeatable
   --kernel-port <n> port for http://<port>.kernel.localhost/ (default 80)
   --no-kernel       do not serve the page's kernel on <port>.kernel.localhost
   --cdp <url>       HTTP debugging URL of a browser already running, such as http://127.0.0.1:9222
-  --rotate-key      replace the stored key, so earlier launch URLs stop working
-  --ephemeral       use a fresh key and any free port, and store nothing
+  --rotate-key      accepted for compatibility; does nothing, every launch has a fresh key
+  --ephemeral       accepted for compatibility; does nothing, no key is ever stored
   --no-open         print the URL without opening a browser
   --quiet           do not log proxied requests
   -h, --help        show this help
@@ -53,21 +53,15 @@ if (values.help) {
   process.exit(0);
 }
 
-if (values.ephemeral && values['rotate-key']) {
-  process.stderr.write('--ephemeral stores no key, so there is none to rotate\n');
-  process.exit(2);
-}
-
 const warn = (line) => process.stderr.write(`${line}\n`);
-const persistent = !values.ephemeral;
 let proxy;
+await forgetStoredKey({ dir: configDir() }).catch((err) =>
+  warn(`slicc-node: could not remove the old key file: ${err.message}`)
+);
 try {
   proxy = await startProxy({
-    key: persistent
-      ? await persistentKey({ dir: configDir(), rotate: values['rotate-key'], warn })
-      : undefined,
-    port: Number(values.port ?? (persistent ? DEFAULT_PROXY_PORT : 0)),
-    portFallback: persistent && values.port === undefined,
+    port: Number(values.port ?? DEFAULT_PROXY_PORT),
+    portFallback: values.port === undefined,
     origins: [...values.origin, new URL(values.page).origin],
     mounts: values.mount,
     kernelPort: values.kernel ? Number(values['kernel-port']) : null,
