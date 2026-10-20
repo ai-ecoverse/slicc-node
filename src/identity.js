@@ -1,6 +1,7 @@
 import { rm, rmdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { mintKey } from './security.js';
 
 export const DEFAULT_PROXY_PORT = 17117;
 
@@ -19,4 +20,9 @@ export function configDir({
 export async function forgetStoredKey({ dir = configDir() } = {}) {
   await rm(join(dir, 'key'), { force: true });
   await rmdir(dir).catch(() => {});
+}
+
+export async function persistentKey({ dir = configDir() } = {}) {
+  await forgetStoredKey({ dir });
+  return mintKey();
 }

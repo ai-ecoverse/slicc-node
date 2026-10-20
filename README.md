@@ -30,7 +30,7 @@ console.log(launchUrl('https://seven.sliccy.ai/', proxy));
 await proxy.close();
 ```
 
-`startProxy` mints a fresh key unless given one. `forgetStoredKey({ dir })` deletes a key file left in `configDir()` by an earlier version; the bin calls it at startup. `startProxy` also takes `key`, `portFallback` (listen on any free port when `port` is taken), `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off), `kernelOpenTimeout` (ms, default 10 s), `cdp` (HTTP debugging URL of a browser already running) and `cdpReconnectDelay` (ms, default 1 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
+`startProxy` mints a fresh key unless given one. `forgetStoredKey({ dir })` deletes a key file left in `configDir()` by an earlier version; the bin calls it at startup. `persistentKey({ dir })` is deprecated: it does the same and returns a fresh key, like a launch. `startProxy` also takes `key`, `portFallback` (listen on any free port when `port` is taken), `host`, `fetch`, `maxRequestBody`, `log`, `mounts` (the `--mount` values), `warn`, `hostfsIdle`, `kernelPort` (default `80`, `null` for off), `kernelOpenTimeout` (ms, default 10 s), `cdp` (HTTP debugging URL of a browser already running) and `cdpReconnectDelay` (ms, default 1 s), and resolves with `{ url, key, server, kernelPort, close() }`. `kernelPort` is `null` when the listener is off or could not bind.
 
 ## Protocol
 

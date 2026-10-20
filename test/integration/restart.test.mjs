@@ -6,7 +6,7 @@ import { createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { DEFAULT_PROXY_PORT } from '../../src/index.js';
+import { DEFAULT_PROXY_PORT, persistentKey } from '../../src/index.js';
 import { hop, rawHead, slicc, unframe } from './proxy.mjs';
 
 const seven = 'https://seven.sliccy.ai';
@@ -128,4 +128,16 @@ test('an explicit port that is taken stops slicc-node', async () => {
   } finally {
     blocker.close();
   }
+});
+
+test('the deprecated persistentKey deletes an old key file and returns a fresh key', async () => {
+  const dir = join(base, 'library', 'slicc-node');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'key'), `${oldKey}\n`, { mode: 0o600 });
+  const one = await persistentKey({ dir });
+  const two = await persistentKey({ dir });
+  assert.match(one, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(one, oldKey);
+  assert.notEqual(one, two);
+  assert.ok(await missing(join(dir, 'key')));
 });
