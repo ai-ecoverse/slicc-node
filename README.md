@@ -45,7 +45,7 @@ This is the contract a local proxy implements, so slicc-node and [slicc-swift](h
 
 The page stores `{ url, key }` from the launch fragment. The key lives only as long as the launcher: every launch mints a fresh one and never writes it to disk, so after a restart the page needs the new launch URL, and the old key is refused with `403 proxy key missing or wrong`.
 
-- **No key file.** Earlier versions kept the key in `key` in the config directory (`$XDG_CONFIG_HOME/slicc-node` when that is set, else `~/Library/Application Support/slicc-node` on macOS, `%APPDATA%\slicc-node` on Windows and `~/.config/slicc-node` elsewhere). slicc-node deletes that file, and the directory if it is then empty, at startup, and never reads it.
+- **No key file.** Earlier versions kept the key in `key` in the config directory (`$XDG_CONFIG_HOME/slicc-node` when that is set, else `~/Library/Application Support/slicc-node` on macOS, `%APPDATA%\slicc-node` on Windows and `~/.config/slicc-node` elsewhere). slicc-node deletes that file and any `key.<hex>.tmp` beside it, and the directory if it is then empty, at startup, and never reads it.
 - **Port.** The default is `17117`. If it is taken, for example by a second slicc-node, the proxy warns and takes any free port. A port given with `--port` that is taken stops slicc-node.
 - **Host folders** are only as persistent as the command line: pass the same `--mount` options again. Tokens never survive a restart.
 - `--rotate-key` and `--ephemeral` are still accepted and do nothing.

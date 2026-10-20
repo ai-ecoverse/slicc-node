@@ -1,4 +1,4 @@
-import { rm, rmdir } from 'node:fs/promises';
+import { readdir, rm, rmdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mintKey } from './security.js';
@@ -18,7 +18,9 @@ export function configDir({
 }
 
 export async function forgetStoredKey({ dir = configDir() } = {}) {
-  await rm(join(dir, 'key'), { force: true });
+  const names = await readdir(dir).catch(() => []);
+  const stale = names.filter((name) => name === 'key' || /^key\.[0-9a-f]+\.tmp$/.test(name));
+  await Promise.all(stale.map((name) => rm(join(dir, name), { force: true })));
   await rmdir(dir).catch(() => {});
 }
 

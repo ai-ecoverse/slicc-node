@@ -456,9 +456,7 @@ export async function startProxy(options = {}) {
     await listen(server, options.port ?? 0, host);
   } catch (err) {
     if (err.code !== 'EADDRINUSE' || !options.portFallback) throw err;
-    (options.warn ?? log)(
-      `port ${options.port} is taken; using a free port, so pages from an earlier launch cannot reconnect`
-    );
+    (options.warn ?? log)(`port ${options.port} is taken; using a free port`);
     await listen(server, 0, host);
   }
   port = server.address().port;

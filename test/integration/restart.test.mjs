@@ -77,9 +77,11 @@ test('a key file left by an earlier version is deleted at startup and never used
   const file = join(dir, 'slicc-node', 'key');
   await mkdir(join(dir, 'slicc-node'), { recursive: true });
   await writeFile(file, `${oldKey}\n`, { mode: 0o600 });
+  await writeFile(`${file}.0123456789ab.tmp`, `${oldKey}\n`, { mode: 0o600 });
   const proxy = await slicc(['--port', String(await freePort())], { config: dir });
   try {
     assert.ok(await missing(file));
+    assert.ok(await missing(join(dir, 'slicc-node')));
     assert.notEqual(proxy.key, oldKey);
     assert.equal(await fetched(proxy, oldKey), 403);
   } finally {
