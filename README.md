@@ -1,5 +1,7 @@
 # slicc-node
 
+**Retired (2026-10-26).** slicc-node is no longer maintained, every version is deprecated on npm, and this repository is archived. Seven stopped using the local proxy in its 1.51.4 release. Use [slicc](https://github.com/ai-ecoverse/slicc-cli) instead: `npx sliccy@next`, or `curl -fsSL https://get.sliccy.ai/slicc | sh`. [Coming from slicc-node](https://github.com/ai-ecoverse/slicc-cli#coming-from-slicc-node) maps slicc-node's options to slicc's. The rest of this README is kept as the frozen specification of the proxy protocol.
+
 SLICC's local proxy for Node. It gives the new SLICC on `*.sliccy.ai` full network access: the page's kernel sends every request a program makes (`curl`, `git`, `npm`) to this process on loopback, which fetches it without CORS.
 
 ```bash
